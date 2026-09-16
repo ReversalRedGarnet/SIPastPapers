@@ -86,7 +86,7 @@ export default async function YearPage({ params }: YearPageProps) {
 
         {publishedFiles.length > 0 && (
           <a
-            className="button secondary"
+            className="button button--gradient"
             style={{ marginBottom: "1.25rem", display: "inline-block" }}
             href={`/api/download-year/${seriesCode}/${year}`}
           >
