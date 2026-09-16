@@ -1,5 +1,6 @@
-import { promises as fs } from "node:fs";
+import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
+import type { Readable } from "node:stream";
 import type { PutResult, StorageProvider } from "./types";
 
 /**
@@ -38,6 +39,22 @@ export class LocalFilesystemStorage implements StorageProvider {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw err;
     }
+  }
+
+  /**
+   * Existence is checked upfront (rather than letting createReadStream's
+   * async 'error' event surface ENOENT) so this matches get()'s
+   * Promise<Readable | null> contract instead of an error-emitting stream.
+   */
+  async getStream(key: string): Promise<Readable | null> {
+    const resolved = this.resolve(key);
+    try {
+      await fs.access(resolved);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw err;
+    }
+    return createReadStream(resolved);
   }
 
   async exists(key: string): Promise<boolean> {

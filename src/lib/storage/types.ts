@@ -1,3 +1,5 @@
+import type { Readable } from "node:stream";
+
 /**
  * Storage abstraction per PROJECT_SPEC.md section 5.1.
  *
@@ -19,6 +21,15 @@ export interface StorageProvider {
 
   /** Read the full contents stored at `key`, or null if it doesn't exist. */
   get(key: string): Promise<Buffer | null>;
+
+  /**
+   * Read the contents stored at `key` as a stream, or null if it doesn't
+   * exist — for a caller that wants to pipe bytes onward (e.g. into a zip
+   * entry) without holding the whole file in memory. `get()` remains the
+   * right choice for a caller that genuinely needs the full Buffer (sha256
+   * hashing at ingest time, etc.); this doesn't replace it.
+   */
+  getStream(key: string): Promise<Readable | null>;
 
   /** Whether an object exists at `key`. */
   exists(key: string): Promise<boolean>;

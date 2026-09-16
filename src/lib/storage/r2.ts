@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
@@ -72,6 +73,28 @@ export class R2Storage implements StorageProvider {
       if (!result.Body) return null;
       const bytes = await result.Body.transformToByteArray();
       return Buffer.from(bytes);
+    } catch (err) {
+      if (isNotFoundError(err)) return null;
+      throw err;
+    }
+  }
+
+  /**
+   * `result.Body` is typed as `Readable | ReadableStream | Blob`
+   * (`StreamingBlobPayloadOutputTypes`) because the AWS SDK also runs in
+   * browsers/Workers, but this app only ever runs the Node.js request
+   * handler, which always hands back a Node `Readable` -- checked rather
+   * than blindly cast, so a future SDK/runtime change fails loudly here
+   * instead of producing a stream `.append()` can't actually read.
+   */
+  async getStream(key: string): Promise<Readable | null> {
+    try {
+      const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      if (!result.Body) return null;
+      if (!(result.Body instanceof Readable)) {
+        throw new Error(`R2 GetObject for "${key}" returned a non-Node stream body (got ${typeof result.Body})`);
+      }
+      return result.Body;
     } catch (err) {
       if (isNotFoundError(err)) return null;
       throw err;
