@@ -60,6 +60,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <Link href="/about">About</Link>
               <Link href="/about#corrections">Report an issue</Link>
             </nav>
+            <span>
+              Run by A.D. Orihao · <a href="mailto:dorihaop@gmail.com">dorihaop@gmail.com</a>
+            </span>
           </div>
         </footer>
       </body>

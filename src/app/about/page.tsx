@@ -65,7 +65,8 @@ export default function AboutPage() {
         institutions and contributors are not set up yet.
       </p>
 
-      <p className="hint">
+      <h2>About the creator</h2>
+      <p>
         This project is run by A.D. Orihao. For any queries, issues, or
         corrections, contact{" "}
         <a href="mailto:dorihaop@gmail.com">dorihaop@gmail.com</a>.
