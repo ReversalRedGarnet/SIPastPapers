@@ -359,10 +359,8 @@ export interface PublicArtifactPage {
  * clamp to something valid rather than erroring -- a page listing is not
  * the place for a 404. `limit` is clamped to RESULTS_MAX_PAGE_SIZE so the
  * param can't be used to opt back into the original unpaginated behavior.
- *
- * Total count comes from the same query via `count(*) over()` rather than
- * a separate COUNT(*) round trip -- one query returns both this page's
- * rows and the true total.
+ * Total count is a second query run alongside the page's row query -- see
+ * the inline comment below for why, not a single `count(*) over()` query.
  *
  * Not wrapped in React's cache(): /results calls this exactly once per
  * request (no duplicate call site the way getPublicArtifactBySlug had), so

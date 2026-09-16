@@ -1,8 +1,9 @@
 /**
  * Domain types mirroring the relational schema in PROJECT_SPEC.md section 4.2
- * (see migrations/sqlite/0001_init.sql for the local dev database). Used by
- * both the write path (src/lib/db/queries.ts) and the read-facing UI shape,
- * `PublicExamRecord` below.
+ * (see migrations/0001_init.sql for the actual Postgres schema). Only the
+ * subset src/lib/db/queries.ts and the UI actually pass around by these
+ * names is kept here — the query layer otherwise shapes rows with its own
+ * per-query Row interfaces, not a full one-type-per-table mirror.
  */
 
 export type UUID = string;
@@ -14,15 +15,6 @@ export interface ExamSeries {
   code: string; // e.g. "sisc-l1"
   name: string; // e.g. "SISC Level 1"
   description: string | null;
-}
-
-// --- exam_instances --------------------------------------------------------
-
-export interface ExamInstance {
-  id: UUID;
-  examSeriesId: UUID;
-  year: number;
-  officialName: string | null;
 }
 
 // --- subjects ---------------------------------------------------------
@@ -84,29 +76,6 @@ export type SourceType =
   | "community"
   | "other";
 
-export interface Artifact {
-  id: UUID;
-  examInstanceId: UUID;
-  subjectId: UUID;
-  type: ArtifactType;
-  paperNo: string | null; // printed identifier: "1", "2", "A", "B", "—"
-  title: string;
-  status: ArtifactStatus;
-  publishedAt: string | null; // ISO timestamp
-}
-
-// --- files ---------------------------------------------------------
-
-export interface FileAsset {
-  id: UUID;
-  artifactId: UUID;
-  storageKey: string;
-  sha256: string;
-  mime: string;
-  bytes: number;
-  createdAt: string;
-}
-
 // --- sources ---------------------------------------------------------
 
 export interface Source {
@@ -116,65 +85,6 @@ export interface Source {
   personLabel: string | null;
   url: string | null;
   attribution: string | null;
-}
-
-export interface ArtifactSource {
-  artifactId: UUID;
-  sourceId: UUID;
-  isPrimary: boolean;
-  notes: string | null;
-}
-
-// --- verifications ---------------------------------------------------------
-
-export interface Verification {
-  id: UUID;
-  artifactId: UUID;
-  status: VerificationStatus;
-  reviewer: string | null;
-  checkedAt: string;
-  notes: string | null;
-}
-
-// --- rights_records ---------------------------------------------------------
-
-export interface RightsRecord {
-  id: UUID;
-  artifactId: UUID;
-  rightsStatus: RightsStatus;
-  basis: string | null;
-  evidenceUri: string | null;
-  approvedBy: string | null;
-  approvedAt: string | null;
-  expiryDate: string | null;
-  notes: string | null;
-}
-
-// --- issues ---------------------------------------------------------
-
-export type IssueStatus = "open" | "investigating" | "resolved" | "declined";
-
-export interface Issue {
-  id: UUID;
-  artifactId: UUID;
-  issueType: string;
-  description: string;
-  contact: string | null;
-  status: IssueStatus;
-  createdAt: string;
-  resolvedAt: string | null;
-}
-
-// --- audit_events ---------------------------------------------------------
-
-export interface AuditEvent {
-  id: UUID;
-  actorId: UUID | null;
-  eventType: string;
-  objectType: string;
-  objectId: UUID;
-  timestamp: string;
-  metadata: Record<string, unknown>;
 }
 
 // --- Denormalized read shapes for the public UI -----------------------------
