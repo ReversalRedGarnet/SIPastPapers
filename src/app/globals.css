@@ -1,0 +1,886 @@
+:root {
+  --color-bg: #ffffff;
+  --color-bg-subtle: #faf9f8;
+  --color-text: #201f1e;
+  --color-muted: #616161;
+  --color-border: #e1e1e1;
+  --color-accent: #106ebe;
+  --color-accent-contrast: #ffffff;
+  --color-surface: #f6f7f8;
+  --color-warning-bg: #fff6e0;
+  --color-warning-border: #caa227;
+  --font-sans: "Public Sans", system-ui, -apple-system, Roboto, Helvetica,
+    Arial, sans-serif;
+  --max-width: 72rem;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #1f1f1f;
+    --color-bg-subtle: #262626;
+    --color-text: #f3f2f1;
+    --color-muted: #c8c6c4;
+    --color-border: #3b3a39;
+    --color-accent: #4cc2ff;
+    --color-accent-contrast: #0b1320;
+    --color-surface: #292827;
+    --color-warning-bg: #362a08;
+    --color-warning-border: #caa227;
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  color: var(--color-text);
+  background: var(--color-bg-subtle);
+  line-height: 1.55;
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+a {
+  color: var(--color-accent);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  padding: 0.5rem 1rem;
+  z-index: 100;
+}
+
+.skip-link:focus {
+  left: 0.5rem;
+  top: 0.5rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Header / navigation ------------------------------------------------- */
+
+.site-header {
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.site-header__inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0.85rem 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.site-title {
+  font-weight: 600;
+  font-size: 1.05rem;
+  text-decoration: none;
+  color: var(--color-text);
+}
+
+.site-nav {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+}
+
+.site-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text);
+  border-bottom: 2px solid transparent;
+}
+
+.site-nav a:hover {
+  color: var(--color-accent);
+}
+
+.site-nav a.active {
+  color: var(--color-accent);
+  font-weight: 600;
+  border-bottom-color: var(--color-accent);
+}
+
+main {
+  flex: 1 0 auto;
+  width: 100%;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 1.75rem 1.5rem 3rem;
+}
+
+.site-footer {
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
+.site-footer__inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.site-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.site-footer a {
+  color: var(--color-muted);
+}
+
+.site-footer a:hover {
+  color: var(--color-accent);
+}
+
+/* Typography ------------------------------------------------------------ */
+
+h1 {
+  font-size: 1.875rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.lede {
+  color: var(--color-muted);
+  font-size: 0.9375rem;
+}
+
+.hint {
+  font-weight: 400;
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+}
+
+/* Cards ------------------------------------------------------------------ */
+
+.card {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 1.5rem;
+}
+
+.card h2 {
+  margin-top: 0;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  /* Grid's default (stretch) — cards match the row's height automatically;
+     each card's own content still sits at its natural top-aligned height. */
+  align-items: stretch;
+}
+
+@media (max-width: 48rem) {
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.section-header h2 {
+  margin: 0;
+}
+
+/* Forms ------------------------------------------------------------------ */
+
+fieldset {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+}
+
+label {
+  display: block;
+  font-weight: 600;
+  font-size: 0.875rem;
+  margin-bottom: 0.3rem;
+}
+
+.field {
+  margin-bottom: 1rem;
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="url"],
+input[type="email"],
+input[type="search"],
+input[type="file"],
+select,
+textarea {
+  width: 100%;
+  max-width: 32rem;
+  min-height: 2.75rem;
+  padding: 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+textarea {
+  min-height: 6rem;
+}
+
+select {
+  cursor: pointer;
+}
+
+/* Touch targets: WCAG 2.5.8 wants at least 24x24px; on a small mobile
+   screen (spec section 3.3) we go well past that so taps land reliably. */
+button,
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0.6rem 1.2rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  text-align: center;
+  white-space: nowrap;
+}
+
+button:hover,
+.button:hover {
+  filter: brightness(1.08);
+}
+
+button.secondary,
+.button.secondary {
+  background: transparent;
+  color: var(--color-accent);
+}
+
+button.secondary:hover,
+.button.secondary:hover {
+  background: var(--color-surface);
+}
+
+/* Search: a compact, stacked layout (home) and a single-line inline
+   layout (results) share the same card chrome. */
+
+.search-form {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  background: var(--color-bg);
+}
+
+.search-form .field {
+  margin-bottom: 0.75rem;
+}
+
+.search-form .field:last-child {
+  margin-bottom: 0;
+}
+
+.search-form__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.search-form__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.search-form__filters > div {
+  flex: 1 1 9rem;
+  min-width: 9rem;
+}
+
+.search-form__filters select {
+  max-width: none;
+  width: 100%;
+}
+
+.search-form--inline .search-form__row {
+  align-items: stretch;
+}
+
+.search-form--inline .search-form__row input {
+  flex: 1 1 auto;
+  max-width: none;
+}
+
+/* Chevron list rows: exam levels, subjects (with counts), paper types --- */
+
+.list-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.list-rows li + li {
+  border-top: 1px solid var(--color-border);
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1.1rem;
+  text-decoration: none;
+  color: var(--color-text);
+  min-height: 2.75rem;
+}
+
+.list-row:hover {
+  background: var(--color-surface);
+}
+
+.list-row__label {
+  font-weight: 500;
+  flex: 1 1 auto;
+}
+
+.list-row__meta {
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.list-row__chevron {
+  color: var(--color-muted);
+  flex: 0 0 auto;
+}
+
+.list-row--static {
+  cursor: default;
+}
+
+.list-row--static:hover {
+  background: none;
+}
+
+/* Browse: sidebar + content two-pane layout ------------------------------- */
+
+.browse-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 2rem;
+}
+
+.browse-sidebar {
+  flex: 0 0 14rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  padding: 0.5rem;
+}
+
+.browse-sidebar ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.browse-sidebar > ul > li + li {
+  margin-top: 0.1rem;
+}
+
+.browse-sidebar a {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: var(--color-text);
+  font-size: 0.9375rem;
+}
+
+.browse-sidebar a:hover {
+  background: var(--color-surface);
+}
+
+.browse-sidebar a.active {
+  background: var(--color-surface);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.browse-sidebar__years {
+  margin: 0.15rem 0 0.4rem 0.75rem;
+  border-left: 1px solid var(--color-border);
+}
+
+.browse-sidebar__years a {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.875rem;
+}
+
+.browse-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 40rem) {
+  .browse-layout {
+    flex-direction: column;
+  }
+
+  .browse-sidebar {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+}
+
+/* Tables ------------------------------------------------------------------ */
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  background: var(--color-bg);
+}
+
+caption {
+  text-align: left;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.9375rem;
+}
+
+th {
+  color: var(--color-muted);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.data-table {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.data-table table {
+  border: none;
+}
+
+.data-table th,
+.data-table td {
+  border-left: none;
+  border-right: none;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* Below the tablet/mobile breakpoint (matches .browse-layout's stacking
+   point), the paper-list tables (/results, homepage "Recently added")
+   switch from a table to a stack of cards -- a horizontally-scrolling or
+   cramped table is a worse fit for a narrow screen than the same rows
+   presented as cards. Real <table> markup is kept for semantics/screen
+   readers; only the layout changes, via display overrides on the existing
+   elements plus a CSS-generated label (from data-label) in place of the
+   now-hidden header row. */
+@media (max-width: 40rem) {
+  .data-table {
+    border: none;
+  }
+
+  .data-table table,
+  .data-table thead,
+  .data-table tbody,
+  .data-table tr,
+  .data-table th,
+  .data-table td {
+    display: block;
+  }
+
+  .data-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+
+  .data-table tbody tr {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    box-shadow: var(--shadow-card);
+    padding: 0.85rem 1rem;
+  }
+
+  .data-table tbody tr + tr {
+    margin-top: 0.75rem;
+  }
+
+  .data-table td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.3rem 0;
+    border-bottom: none;
+  }
+
+  .data-table td[data-label]::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    color: var(--color-muted);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  .data-table td:last-child {
+    justify-content: flex-start;
+    gap: 1rem;
+    margin-top: 0.35rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--color-border);
+  }
+}
+
+.matrix-cell a {
+  display: block;
+  text-decoration: none;
+  padding: 0.15rem 0;
+}
+
+/* Badges -------------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  margin: 0 0.35rem 0.35rem 0;
+  white-space: nowrap;
+}
+
+.badge--good {
+  background: #e3f5e6;
+  color: #1c5c2b;
+  border-color: #9ecda9;
+}
+
+.badge--warn {
+  background: var(--color-warning-bg);
+  color: #6b4e05;
+  border-color: var(--color-warning-border);
+}
+
+.badge--bad {
+  background: #fbe4e4;
+  color: #7a1f1f;
+  border-color: #e3a3a3;
+}
+
+.badge--neutral {
+  background: var(--color-surface);
+  color: var(--color-muted);
+}
+
+@media (prefers-color-scheme: dark) {
+  .badge--good {
+    background: #123a1c;
+    color: #a9e6b6;
+    border-color: #2f6c3e;
+  }
+  .badge--warn {
+    color: #f0d27a;
+  }
+  .badge--bad {
+    background: #3a1414;
+    color: #f1b0b0;
+    border-color: #7a3a3a;
+  }
+}
+
+/* Breadcrumb ---------------------------------------------------------- */
+
+.breadcrumb {
+  font-size: 0.8125rem;
+  color: var(--color-muted);
+  margin-bottom: 1rem;
+}
+
+.breadcrumb a {
+  text-decoration: none;
+  color: var(--color-muted);
+}
+
+.breadcrumb a:hover {
+  color: var(--color-accent);
+}
+
+/* Document / paper page -------------------------------------------------- */
+
+.doc-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 22rem) 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 55rem) {
+  .doc-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.doc-subtitle {
+  color: var(--color-muted);
+  margin: 0 0 0.75rem;
+}
+
+.paper-pager {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.paper-pager__link {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  text-decoration: none;
+  color: var(--color-text);
+  min-width: 0;
+}
+
+.paper-pager__link:hover {
+  border-color: var(--color-accent);
+}
+
+.paper-pager__link--next {
+  text-align: right;
+  align-items: flex-end;
+}
+
+.paper-pager__direction {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.paper-pager__label {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 30rem) {
+  .paper-pager {
+    flex-direction: column;
+  }
+
+  .paper-pager__link--next {
+    text-align: left;
+    align-items: flex-start;
+  }
+}
+
+.doc-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 1.1rem 0;
+}
+
+.doc-actions .button {
+  flex: 1 1 0;
+}
+
+.doc-viewer {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-surface);
+  min-height: 24rem;
+}
+
+.pdf-frame {
+  display: block;
+  width: 100%;
+  height: 42rem;
+  max-height: 80vh;
+  border: 0;
+}
+
+details.tech-details {
+  margin-top: 1rem;
+  font-size: 0.875rem;
+}
+
+details.tech-details summary {
+  cursor: pointer;
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+dl.meta-table {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0.75rem 0 0;
+}
+
+dl.meta-table dt {
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+dl.meta-table dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+/* Misc ------------------------------------------------------------------- */
+
+.empty-state {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 2rem;
+  text-align: center;
+  color: var(--color-muted);
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.confirmation {
+  border: 1px solid var(--color-warning-border);
+  background: var(--color-warning-bg);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  margin-top: 1.5rem;
+}
+
+.confirmation pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+}
+
+/* Small mobile screens (spec section 3.3: works well on a small screen and
+   a slow connection) — stack what would otherwise get cramped. */
+@media (max-width: 30rem) {
+  main {
+    padding: 1.25rem 1rem 2.5rem;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+  }
+}
