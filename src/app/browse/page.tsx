@@ -7,6 +7,8 @@ import { seriesDisplayLabel } from "@/lib/format";
 
 export const metadata: Metadata = {
   title: "Browse",
+  description:
+    "Browse past Solomon Islands national exam papers by exam level — SIF3/SIJSC, SISC Level 1, and SISC Level 2/SINF6 — then by year and subject.",
 };
 
 // The exam series list essentially never changes (a new series is a rare,

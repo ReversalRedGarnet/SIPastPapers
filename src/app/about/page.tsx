@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "About",
+  description:
+    "How the SI National Exam Archive is run: purpose, ownership and independence from MEHRD, licensing, and the correction/takedown process for reported papers.",
 };
 
 export default function AboutPage() {
@@ -28,9 +30,16 @@ export default function AboutPage() {
 
       <h2>Open source</h2>
       <p>
-        Code is released under a permissive license (MIT/Apache-2.0),
-        covering the codebase only — not rights to archived exam content,
-        which is tracked separately.
+        Code is released under the MIT license (see the{" "}
+        <a
+          href="https://github.com/ReversalRedGarnet/SIPastPapers/blob/main/LICENSE"
+          target="_blank"
+          rel="noreferrer"
+        >
+          LICENSE
+        </a>{" "}
+        file), covering the codebase only — not rights to archived exam
+        content, which is tracked separately.
       </p>
 
       <h2 id="corrections">Correction and takedown process</h2>

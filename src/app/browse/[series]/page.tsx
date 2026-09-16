@@ -15,7 +15,16 @@ export async function generateMetadata({ params }: SeriesPageProps): Promise<Met
   const { series: seriesCode } = await params;
   const examSeries = await listExamSeries();
   const series = examSeries.find((s) => s.code === seriesCode);
-  return { title: series ? seriesDisplayLabel(series.code) : "Not found" };
+  if (!series) return { title: "Not found" };
+
+  const label = seriesDisplayLabel(series.code);
+  const title = `${label} past papers`;
+  const description = `Browse past ${label} exam papers from the Solomon Islands national exam archive, by year and subject.`;
+  return {
+    title,
+    description,
+    openGraph: { title, description, type: "website" },
+  };
 }
 
 // The year range itself is fixed (see listBrowseYears); what changes here
