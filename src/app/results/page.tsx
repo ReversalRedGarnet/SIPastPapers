@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { listExamSeries, listSubjects, listYears, searchPublicArtifactsPageCached } from "@/lib/db/queries";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
+import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 
 export const metadata: Metadata = {
   title: "Search",
@@ -93,40 +94,40 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
             <label htmlFor="series" className="visually-hidden">
               Exam level
             </label>
-            <select id="series" name="series" defaultValue={filters.series ?? ""}>
+            <AutoSubmitSelect id="series" name="series" defaultValue={filters.series ?? ""}>
               <option value="">Any exam level</option>
               {examSeries.map((s) => (
                 <option key={s.code} value={s.code}>
                   {seriesDisplayLabel(s.code)}
                 </option>
               ))}
-            </select>
+            </AutoSubmitSelect>
           </div>
           <div>
             <label htmlFor="year" className="visually-hidden">
               Year
             </label>
-            <select id="year" name="year" defaultValue={filters.year ?? ""}>
+            <AutoSubmitSelect id="year" name="year" defaultValue={filters.year ?? ""}>
               <option value="">Any year</option>
               {years.map((y) => (
                 <option key={y} value={y}>
                   {y}
                 </option>
               ))}
-            </select>
+            </AutoSubmitSelect>
           </div>
           <div>
             <label htmlFor="subject" className="visually-hidden">
               Subject
             </label>
-            <select id="subject" name="subject" defaultValue={filters.subject ?? ""}>
+            <AutoSubmitSelect id="subject" name="subject" defaultValue={filters.subject ?? ""}>
               <option value="">Any subject</option>
               {subjects.map((s) => (
                 <option key={s.id} value={s.subjectCode ?? s.id}>
                   {s.canonicalName}
                 </option>
               ))}
-            </select>
+            </AutoSubmitSelect>
           </div>
         </div>
       </form>
