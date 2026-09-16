@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { listExamSeries, listSubjects, listYears, searchPublicArtifactsPageCached } from "@/lib/db/queries";
-import { formatBytes, seriesDisplayLabel, verificationLabel, verificationTone } from "@/lib/format";
-import { Badge } from "@/components/Badge";
+import { formatBytes, seriesDisplayLabel } from "@/lib/format";
 
 export const metadata: Metadata = {
   title: "Search",
@@ -164,7 +163,6 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                   <th scope="col">Year</th>
                   <th scope="col">Subject</th>
                   <th scope="col">Exam level</th>
-                  <th scope="col">Verification</th>
                   <th scope="col">
                     <span className="visually-hidden">Actions</span>
                   </th>
@@ -178,9 +176,6 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                       <td data-label="Year">{r.year}</td>
                       <td data-label="Subject">{r.subject}</td>
                       <td data-label="Exam level">{seriesDisplayLabel(r.examSeriesCode)}</td>
-                      <td data-label="Verification">
-                        <Badge tone={verificationTone(r.verification)}>{verificationLabel(r.verification)}</Badge>
-                      </td>
                       <td>
                         <Link href={href}>View</Link>
                         {r.file && (
