@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { getPublicArtifactBySlug, listSubjectArtifacts } from "@/lib/db/queries";
 import { artifactListLabel } from "@/lib/artifact-naming";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
+import { SITE_NAME, SITE_URL } from "@/lib/site";
 import { reportIssueAction } from "./actions";
 
 interface DocumentPageProps {
@@ -34,9 +35,13 @@ export async function generateMetadata({
   if (!found) return { title: "Not found" };
   const { record } = found;
   const label = artifactListLabel(record.artifactType, record.paperNumber);
+  const seriesLabel = seriesDisplayLabel(record.examSeriesCode);
+  const title = `${seriesLabel} ${record.subject} ${record.year} — ${label}`;
+  const description = `${label} for ${record.subject} — ${seriesLabel} ${record.year} exam paper from the Solomon Islands national exam archive, free to view and download.`;
   return {
-    title: `${seriesDisplayLabel(record.examSeriesCode)} ${record.subject} ${record.year} — ${label}`,
-    description: `${seriesDisplayLabel(record.examSeriesCode)} ${record.subject} ${record.year} — ${label}.`,
+    title,
+    description,
+    openGraph: { title, description, type: "article" },
   };
 }
 
@@ -56,6 +61,35 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
 
   const currentPath = `/exams/${record.examSeriesCode}/${record.year}/${record.subjectSlug}/${record.slug}`;
   const typeLabel = artifactListLabel(record.artifactType, record.paperNumber);
+  const seriesLabel = seriesDisplayLabel(record.examSeriesCode);
+
+  // Only emit structured data when there's an actual document to describe --
+  // a 'not_yet_recovered' placeholder has no file, so asserting a
+  // DigitalDocument exists for it would be describing something that isn't
+  // there. Deliberately doesn't name MEHRD/an official publisher anywhere:
+  // this only claims what the About page already claims (see
+  // src/app/about/page.tsx's "Ownership and independence" section).
+  const jsonLd = record.file
+    ? {
+        "@context": "https://schema.org",
+        "@type": ["LearningResource", "DigitalDocument"],
+        name: `${seriesLabel} ${record.subject} ${record.year} — ${typeLabel}`,
+        description: `${typeLabel} for ${record.subject} — ${seriesLabel} ${record.year} exam paper from the Solomon Islands national exam archive.`,
+        url: `${SITE_URL}${currentPath}`,
+        inLanguage: "en",
+        isAccessibleForFree: true,
+        learningResourceType: typeLabel,
+        educationalLevel: seriesLabel,
+        about: { "@type": "Thing", name: record.subject },
+        temporalCoverage: String(record.year),
+        publisher: { "@type": "Organization", name: SITE_NAME },
+        associatedMedia: {
+          "@type": "MediaObject",
+          contentUrl: `${SITE_URL}/api/files/${record.file.id}`,
+          encodingFormat: record.file.mime,
+        },
+      }
+    : null;
 
   const subjectArtifacts = await listSubjectArtifacts(record.examSeriesCode, record.subjectSlug);
   const currentIndex = subjectArtifacts.findIndex((r) => r.id === record.id);
@@ -73,9 +107,16 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
 
   return (
     <>
+      {jsonLd && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
+        />
+      )}
+
       <nav aria-label="Breadcrumb" className="breadcrumb">
         <Link href="/browse">Browse</Link> ›{" "}
-        <Link href={`/browse/${record.examSeriesCode}`}>{seriesDisplayLabel(record.examSeriesCode)}</Link> ›{" "}
+        <Link href={`/browse/${record.examSeriesCode}`}>{seriesLabel}</Link> ›{" "}
         <Link href={`/browse/${record.examSeriesCode}/${record.year}`}>{record.year}</Link> ›{" "}
         <Link href={`/browse/${record.examSeriesCode}/${record.year}/${record.subjectSlug}`}>
           {record.subject}
@@ -87,7 +128,7 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
         <div className="doc-meta card">
           <h1>{record.subject}</h1>
           <p className="doc-subtitle">
-            {seriesDisplayLabel(record.examSeriesCode)} · {record.year}
+            {seriesLabel} · {record.year}
           </p>
 
           {record.file ? (
