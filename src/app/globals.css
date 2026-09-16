@@ -4,11 +4,21 @@
   --color-text: #201f1e;
   --color-muted: #616161;
   --color-border: #e1e1e1;
-  --color-accent: #106ebe;
+  --color-accent: #1e3a5f;
   --color-accent-contrast: #ffffff;
   --color-surface: #f6f7f8;
   --color-warning-bg: #fff6e0;
   --color-warning-border: #caa227;
+  /* SI-flag-inspired accents (PROJECT_SPEC.md color system pass) --
+     sparing use only, see their usages below. --chrome-fg is deliberately
+     not redefined per mode: header/footer keep a colored gradient chrome
+     regardless of page theme, so their text stays a constant near-white
+     rather than flipping with --color-text. */
+  --si-blue-deep: #0f2033;
+  --si-green: #1f4d3a;
+  --si-gold: #b8862e;
+  --si-blue-tint: #eef2f7;
+  --chrome-fg: #f3f6fa;
   --font-sans: "Public Sans", system-ui, -apple-system, Roboto, Helvetica,
     Arial, sans-serif;
   --max-width: 72rem;
@@ -24,11 +34,17 @@
     --color-text: #f3f2f1;
     --color-muted: #c8c6c4;
     --color-border: #3b3a39;
-    --color-accent: #4cc2ff;
+    --color-accent: #5b8def;
     --color-accent-contrast: #0b1320;
     --color-surface: #292827;
     --color-warning-bg: #362a08;
     --color-warning-border: #caa227;
+    /* Own deeper/richer shades, not an inversion of the light-mode
+       values above -- see the color-system proposal's rationale. */
+    --si-blue-deep: #060e18;
+    --si-green: #2e7d57;
+    --si-gold: #d8a93d;
+    --si-blue-tint: #131e30;
     --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4);
   }
 }
@@ -93,8 +109,17 @@ a {
 /* Header / navigation ------------------------------------------------- */
 
 .site-header {
-  background: var(--color-bg);
-  border-bottom: 1px solid var(--color-border);
+  /* Permanent gradient chrome (blue -> near-black, gold hairline) --
+     independent of page theme, re-tuned per mode via the si-* tokens
+     above; see the color-system proposal for the flag-color pairing
+     rationale. */
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--si-blue-deep) 100%);
+  border-bottom: 1px solid var(--si-gold);
+}
+
+.site-header :focus-visible {
+  /* A blue ring would nearly vanish on this blue-toned background. */
+  outline-color: var(--si-gold);
 }
 
 .site-header__inner {
@@ -112,7 +137,7 @@ a {
   font-weight: 600;
   font-size: 1.05rem;
   text-decoration: none;
-  color: var(--color-text);
+  color: var(--chrome-fg);
 }
 
 .site-nav {
@@ -132,18 +157,22 @@ a {
   text-decoration: none;
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--color-text);
-  border-bottom: 2px solid transparent;
+  color: var(--chrome-fg);
 }
 
 .site-nav a:hover {
-  color: var(--color-accent);
+  color: var(--si-gold);
 }
 
 .site-nav a.active {
-  color: var(--color-accent);
+  color: var(--si-gold);
   font-weight: 600;
-  border-bottom-color: var(--color-accent);
+  /* Thin gradient underline instead of a flat border-bottom-color --
+     one of the three deliberate gradient accents (see proposal). */
+  background-image: linear-gradient(90deg, var(--si-gold), transparent);
+  background-repeat: no-repeat;
+  background-size: 100% 2px;
+  background-position: bottom;
 }
 
 main {
@@ -155,10 +184,15 @@ main {
 }
 
 .site-footer {
-  background: var(--color-bg);
-  border-top: 1px solid var(--color-border);
-  color: var(--color-muted);
+  /* Blue -> deep green: the footer's half of the header/footer pairing
+     (see .site-header above and the color-system proposal). */
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--si-green) 100%);
+  color: var(--chrome-fg);
   font-size: 0.875rem;
+}
+
+.site-footer :focus-visible {
+  outline-color: var(--si-gold);
 }
 
 .site-footer__inner {
@@ -179,11 +213,11 @@ main {
 }
 
 .site-footer a {
-  color: var(--color-muted);
+  color: var(--chrome-fg);
 }
 
 .site-footer a:hover {
-  color: var(--color-accent);
+  color: var(--si-gold);
 }
 
 /* Typography ------------------------------------------------------------ */
@@ -340,6 +374,26 @@ button.secondary:hover,
   background: var(--color-surface);
 }
 
+/* The one deliberate gradient button on the site (currently just
+   "Download all") -- mostly the flat accent fill with a gold corner, not
+   a full blue-to-gold sweep, so button text always sits over the
+   high-contrast majority rather than the low-contrast blend zone. See
+   the color-system proposal for the contrast math.
+
+   The blend zone is kept deliberately tight (10%): blue and gold sit
+   almost exactly opposite each other on the hue wheel (~178deg apart in
+   OKLCH), so ANY smooth interpolation between them -- OKLCH or sRGB --
+   is mathematically forced through an unrelated third hue (cyan/green
+   going one way round, red/magenta the other) at the midpoint. A long
+   blend made that stray hue a visible band across the button; a narrow
+   one keeps it down to an imperceptible sliver at the corner. */
+button.button--gradient,
+.button.button--gradient {
+  background: linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) 80%, var(--si-gold) 100%);
+  border-color: transparent;
+  color: var(--color-accent-contrast);
+}
+
 /* Search: a compact, stacked layout (home) and a single-line inline
    layout (results) share the same card chrome. */
 
@@ -486,9 +540,16 @@ button.secondary:hover,
 }
 
 .browse-sidebar a.active {
-  background: var(--color-surface);
   color: var(--color-accent);
   font-weight: 600;
+  /* Thin gold -> blue gradient rail at the left edge, layered under the
+     existing surface fill -- the sidebar's counterpart to the header
+     nav's gradient underline above. */
+  background-color: var(--color-surface);
+  background-image: linear-gradient(180deg, var(--si-gold), var(--color-accent));
+  background-repeat: no-repeat;
+  background-size: 3px 100%;
+  background-position: left center;
 }
 
 .browse-sidebar__years {
@@ -676,7 +737,10 @@ th {
 }
 
 .badge--neutral {
-  background: var(--color-surface);
+  /* Barely-there directional wash, not a new flat color -- the good/warn/
+     bad badges above keep their existing solid semantic colors untouched,
+     since meaning shouldn't ride on a decorative hue. */
+  background: linear-gradient(135deg, var(--si-blue-tint), var(--color-bg));
   color: var(--color-muted);
 }
 
