@@ -117,6 +117,11 @@ export default function AboutPage() {
         directly into this process. Formal contact channels for
         institutions and contributors are not set up yet.
       </p>
+
+      <p className="hint">Built and maintained by A.D. Orihao</p>
+      <p className="hint">
+        Questions or corrections: <a href="mailto:dorihaop@gmail.com">dorihaop@gmail.com</a>
+      </p>
     </>
   );
 }
