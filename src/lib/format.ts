@@ -1,8 +1,4 @@
-import type {
-  ArtifactStatus,
-  RightsStatus,
-  VerificationStatus,
-} from "@/types/domain";
+import type { ArtifactStatus } from "@/types/domain";
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -14,13 +10,6 @@ export function formatBytes(bytes: number): string {
     unitIndex += 1;
   }
   return `${value.toFixed(1)} ${units[unitIndex]}`;
-}
-
-export function humanizeSlug(slug: string): string {
-  return slug
-    .split("-")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
 }
 
 /**
@@ -74,73 +63,6 @@ export function statusTone(status: ArtifactStatus): "good" | "warn" | "bad" | "n
       return "bad";
     case "not_yet_recovered":
       return "neutral";
-    default:
-      return "neutral";
-  }
-}
-
-export function verificationLabel(v: VerificationStatus): string {
-  switch (v) {
-    case "independently_verified":
-      return "Independently verified";
-    case "source_verified":
-      return "Source verified";
-    case "unverified":
-      return "Unverified";
-    case "flagged":
-      return "Flagged for review";
-    default:
-      return v;
-  }
-}
-
-export function verificationTone(v: VerificationStatus): "good" | "warn" | "bad" | "neutral" {
-  switch (v) {
-    case "independently_verified":
-      return "good";
-    case "source_verified":
-      return "good";
-    case "flagged":
-      return "bad";
-    case "unverified":
-      return "neutral";
-    default:
-      return "neutral";
-  }
-}
-
-export function rightsLabel(r: RightsStatus): string {
-  switch (r) {
-    case "permission_granted":
-      return "Permission granted";
-    case "public_domain_or_expired":
-      return "Public domain / expired";
-    case "pending":
-      return "Rights pending";
-    case "pending_institutional_approval":
-      return "Pending institutional approval";
-    case "rights_hold":
-      return "Rights hold";
-    case "denied":
-      return "Rights denied";
-    case "unknown":
-      return "Rights unknown";
-    default:
-      return r;
-  }
-}
-
-export function rightsTone(r: RightsStatus): "good" | "warn" | "bad" | "neutral" {
-  switch (r) {
-    case "permission_granted":
-    case "public_domain_or_expired":
-      return "good";
-    case "pending":
-    case "pending_institutional_approval":
-      return "warn";
-    case "rights_hold":
-    case "denied":
-      return "bad";
     default:
       return "neutral";
   }
