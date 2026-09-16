@@ -13,9 +13,16 @@
      sparing use only, see their usages below. --chrome-fg is deliberately
      not redefined per mode: header/footer keep a colored gradient chrome
      regardless of page theme, so their text stays a constant near-white
-     rather than flipping with --color-text. */
-  --si-blue-deep: #0f2033;
-  --si-green: #1f4d3a;
+     rather than flipping with --color-text.
+
+     --si-blue is a dedicated chrome fill, separate from --color-accent --
+     --color-accent flips to a bright link-blue in dark mode (right for
+     text/focus/the sidebar rail), which is too bright for a gradient
+     fill or button, so header/footer/button chrome gets its own token
+     tuned per mode instead of inheriting the theme-flipping one. */
+  --si-blue: #2f425b;
+  --si-blue-deep: #273c53;
+  --si-green: #254638;
   --si-gold: #b8862e;
   --si-blue-tint: #eef2f7;
   --chrome-fg: #f3f6fa;
@@ -41,8 +48,9 @@
     --color-warning-border: #caa227;
     /* Own deeper/richer shades, not an inversion of the light-mode
        values above -- see the color-system proposal's rationale. */
-    --si-blue-deep: #060e18;
-    --si-green: #2e7d57;
+    --si-blue: #3d537b;
+    --si-blue-deep: #20314b;
+    --si-green: #346f53;
     --si-gold: #d8a93d;
     --si-blue-tint: #131e30;
     --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4);
@@ -109,11 +117,11 @@ a {
 /* Header / navigation ------------------------------------------------- */
 
 .site-header {
-  /* Permanent gradient chrome (blue -> near-black, gold hairline) --
+  /* Permanent gradient chrome (deep blue wash, gold hairline) --
      independent of page theme, re-tuned per mode via the si-* tokens
      above; see the color-system proposal for the flag-color pairing
      rationale. */
-  background: linear-gradient(135deg, var(--color-accent) 0%, var(--si-blue-deep) 100%);
+  background: linear-gradient(135deg, var(--si-blue) 0%, var(--si-blue-deep) 100%);
   border-bottom: 1px solid var(--si-gold);
 }
 
@@ -184,9 +192,9 @@ main {
 }
 
 .site-footer {
-  /* Blue -> deep green: the footer's half of the header/footer pairing
-     (see .site-header above and the color-system proposal). */
-  background: linear-gradient(135deg, var(--color-accent) 0%, var(--si-green) 100%);
+  /* Blue -> deep green wash: the footer's half of the header/footer
+     pairing (see .site-header above and the color-system proposal). */
+  background: linear-gradient(135deg, var(--si-blue) 0%, var(--si-green) 100%);
   color: var(--chrome-fg);
   font-size: 0.875rem;
 }
@@ -347,9 +355,13 @@ button,
   min-height: 2.75rem;
   padding: 0.6rem 1.2rem;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-accent-contrast);
+  /* --si-blue, not --color-accent: buttons use the same toned-down chrome
+     fill as the header/footer (see --si-blue's definition above), kept
+     separate from --color-accent since that token also drives links, the
+     focus ring, and the sidebar rail, none of which should shift here. */
+  border: 1px solid var(--si-blue);
+  background: var(--si-blue);
+  color: var(--chrome-fg);
   font-size: 0.9375rem;
   font-weight: 600;
   cursor: pointer;
@@ -367,6 +379,10 @@ button.secondary,
 .button.secondary {
   background: transparent;
   color: var(--color-accent);
+  /* Explicit override: the base rule's border now tracks --si-blue, but
+     this outlined variant should keep matching its own accent-colored
+     text, not silently pick up the chrome fill color. */
+  border-color: var(--color-accent);
 }
 
 button.secondary:hover,
@@ -389,9 +405,9 @@ button.secondary:hover,
    one keeps it down to an imperceptible sliver at the corner. */
 button.button--gradient,
 .button.button--gradient {
-  background: linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) 80%, var(--si-gold) 100%);
+  background: linear-gradient(to right, var(--si-blue) 0%, var(--si-blue) 80%, var(--si-gold) 100%);
   border-color: transparent;
-  color: var(--color-accent-contrast);
+  color: var(--chrome-fg);
 }
 
 /* Search: a compact, stacked layout (home) and a single-line inline
