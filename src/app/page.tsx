@@ -9,10 +9,14 @@ import { seriesDisplayLabel } from "@/lib/format";
 export const revalidate = 300;
 
 export default async function HomePage() {
-  const examSeries = await listExamSeries();
-  const subjects = await listSubjects();
-  const years = await listYears();
-  const recent = await listRecentPublicArtifacts(5);
+  // Four independent reads -- none depends on another's result -- so they
+  // run concurrently instead of as four sequential round trips to Neon.
+  const [examSeries, subjects, years, recent] = await Promise.all([
+    listExamSeries(),
+    listSubjects(),
+    listYears(),
+    listRecentPublicArtifacts(5),
+  ]);
 
   return (
     <>

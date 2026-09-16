@@ -15,12 +15,14 @@ interface SubjectPageProps {
 async function loadContext(seriesCode: string, yearParam: string, subjectSlug: string) {
   const year = Number(yearParam);
   if (!Number.isInteger(year)) return undefined;
-  const examSeries = await listExamSeries();
+  // listExamSeries/listSubjects don't depend on each other -- both are
+  // cross-referenced against the route params below, independently of one
+  // another -- so they run concurrently rather than series-then-subjects.
+  const [examSeries, allSubjects] = await Promise.all([listExamSeries(), listSubjects()]);
   const series = examSeries.find((s) => s.code === seriesCode);
   if (!series) return undefined;
   const years = listBrowseYears();
   if (!years.includes(year)) return undefined;
-  const allSubjects = await listSubjects();
   const subject = allSubjects.find((s) => (s.subjectCode ?? s.id) === subjectSlug);
   if (!subject) return undefined;
   return { examSeries, series, years, year, subject };
@@ -30,7 +32,11 @@ export async function generateMetadata({ params }: SubjectPageProps): Promise<Me
   const { series: seriesCode, year, subject: subjectSlug } = await params;
   const context = await loadContext(seriesCode, year, subjectSlug);
   if (!context) return { title: "Not found" };
-  return { title: `${context.subject.canonicalName} ${context.year} — ${seriesDisplayLabel(context.series.code)}` };
+  const label = seriesDisplayLabel(context.series.code);
+  return {
+    title: `${context.subject.canonicalName} ${context.year} — ${label}`,
+    description: `${context.subject.canonicalName} past exam papers for ${label} ${context.year} — Solomon Islands national exam archive.`,
+  };
 }
 
 // The actual paper list for one series/year/subject -- shortest interval
@@ -64,8 +70,12 @@ export default async function SubjectPage({ params }: SubjectPageProps) {
   if (!context) notFound();
   const { examSeries, series, years, year, subject } = context;
 
-  const papers = await searchPublicArtifacts({ series: seriesCode, year: String(year), subject: subjectSlug });
-  const availability = await getExamContentAvailability();
+  // Two independent reads -- neither depends on the other's result -- run
+  // concurrently instead of as two sequential round trips to Neon.
+  const [papers, availability] = await Promise.all([
+    searchPublicArtifacts({ series: seriesCode, year: String(year), subject: subjectSlug }),
+    getExamContentAvailability(),
+  ]);
 
   return (
     <div className="browse-layout">
