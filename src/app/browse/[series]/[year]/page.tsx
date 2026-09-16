@@ -30,7 +30,11 @@ export async function generateMetadata({ params }: YearPageProps): Promise<Metad
   const { series: seriesCode, year } = await params;
   const context = await loadContext(seriesCode, year);
   if (!context) return { title: "Not found" };
-  return { title: `${seriesDisplayLabel(context.series.code)} ${context.year}` };
+  const label = seriesDisplayLabel(context.series.code);
+  return {
+    title: `${label} ${context.year}`,
+    description: `${label} ${context.year} exam papers, by subject — Solomon Islands national exam archive.`,
+  };
 }
 
 // Subjects available for a series/year only change as papers get published
@@ -59,9 +63,13 @@ export default async function YearPage({ params }: YearPageProps) {
   if (!context) notFound();
   const { examSeries, series, years, year } = context;
 
-  const subjects = await listPublicSubjectsForInstance(seriesCode, year);
-  const availability = await getExamContentAvailability();
-  const publishedFiles = await listPublishedFilesForInstance(seriesCode, year);
+  // Three independent reads -- none depends on another's result -- run
+  // concurrently instead of as three sequential round trips to Neon.
+  const [subjects, availability, publishedFiles] = await Promise.all([
+    listPublicSubjectsForInstance(seriesCode, year),
+    getExamContentAvailability(),
+    listPublishedFilesForInstance(seriesCode, year),
+  ]);
 
   return (
     <div className="browse-layout">

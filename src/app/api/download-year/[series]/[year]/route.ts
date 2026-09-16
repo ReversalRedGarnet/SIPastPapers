@@ -63,6 +63,27 @@ export async function GET(
   }
 
   const storage = getStorageProvider();
+
+  // Confirmed before the response below is ever constructed, not after:
+  // once that streaming response starts, its status/headers are already
+  // committed to the client, so there is no way to retroactively turn a
+  // 200 into an error after discovering mid-stream that nothing got
+  // appended. Without this check, every file for this series+year being
+  // missing from storage while the DB still has published rows (real
+  // DB/storage drift, not a normal "no papers yet" state) would produce a
+  // 200 response with a valid but zero-entry zip and no visible error.
+  const existence = await Promise.all(files.map((file) => storage.exists(file.storageKey)));
+  const availableFiles = files.filter((_, i) => existence[i]);
+  if (availableFiles.length === 0) {
+    console.error(
+      `[download-year] every published file for ${seriesCode}/${year} is missing from storage (${files.length} expected)`
+    );
+    return new NextResponse(
+      "This year's papers are temporarily unavailable. Please try again later or report the issue.",
+      { status: 500 }
+    );
+  }
+
   const archive = new ZipArchive({ zlib: { level: 6 } });
 
   // A file-level error (a real storage failure, not the soft "missing"
@@ -79,7 +100,7 @@ export async function GET(
     try {
       const limit = pLimit(READ_CONCURRENCY);
       await Promise.race([
-        Promise.all(files.map((file) => limit(() => appendFile(storage, archive, file)))),
+        Promise.all(availableFiles.map((file) => limit(() => appendFile(storage, archive, file)))),
         archiveError,
       ]);
       await archive.finalize();

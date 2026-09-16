@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
+import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { query, queryOne, queryWithoutRetry, withTransaction } from "./client";
 import { getStorageProvider } from "@/lib/storage";
@@ -196,20 +197,32 @@ function hydratePublicRecord(row: PublicArtifactRow): PublicExamRecord {
 
 // --- reference data reads (used by public pages + the CLI) -----------------
 
-export async function listExamSeries(): Promise<ExamSeries[]> {
+// Wrapped in React's cache() (request-scoped memoization, not Next's
+// unstable_cache): several pages call the same read from both
+// generateMetadata and the page body in one request (e.g. listExamSeries
+// via browse/[series]'s and the browse-tree loadContext() helpers) --
+// cache() collapses those back down to one DB round trip per request.
+// Only applied to read-only functions actually called from page render
+// paths (see the per-function notes below) -- CLI-only reads
+// (getCoverageMatrix, listAllArtifacts, listArtifactsBySeriesYearRange,
+// checkRightsGate) and every mutation are deliberately left unwrapped:
+// scripts/cli.ts runs as one long-lived process across a whole batch
+// operation, where memoizing a read could serve stale data across calls
+// that are supposed to see the effect of an earlier write in the same run.
+export const listExamSeries = cache(async (): Promise<ExamSeries[]> => {
   const rows = await query<ExamSeriesRow>("select * from exam_series order by name");
   return rows.map(toExamSeries);
-}
+});
 
-export async function listSubjects(): Promise<Subject[]> {
+export const listSubjects = cache(async (): Promise<Subject[]> => {
   const rows = await query<SubjectRow>("select * from subjects order by canonical_name");
   return rows.map(toSubject);
-}
+});
 
-export async function listYears(): Promise<number[]> {
+export const listYears = cache(async (): Promise<number[]> => {
   const rows = await query<{ year: number }>("select distinct year from exam_instances order by year");
   return rows.map((r) => r.year);
-}
+});
 
 // --- public reads ------------------------------------------------------
 
@@ -232,7 +245,7 @@ export interface ExamContentAvailability {
  * rather than a per-row existence check (which at 3 series x 11 years would
  * reintroduce the N+1 pattern the earlier hydratePublicRecord fix removed).
  */
-export async function getExamContentAvailability(): Promise<ExamContentAvailability> {
+export const getExamContentAvailability = cache(async (): Promise<ExamContentAvailability> => {
   const rows = await query<{ series_code: string; year: number }>(
     `select distinct es.code as series_code, ei.year as year
      from artifacts a
@@ -247,14 +260,31 @@ export async function getExamContentAvailability(): Promise<ExamContentAvailabil
     yearsWithContent.add(`${row.series_code}:${row.year}`);
   }
   return { seriesWithContent, yearsWithContent };
-}
+});
 
-export async function searchPublicArtifacts(filters: {
+export interface PublicArtifactFilters {
   q?: string;
   series?: string;
   year?: string;
   subject?: string;
-}): Promise<PublicExamRecord[]> {
+}
+
+/**
+ * Shared WHERE-clause builder for both the unpaginated and paginated public
+ * search below, so the two can never drift on what a given filter means.
+ * `q` used to be applied by fetching every matching row and filtering in
+ * JavaScript afterwards -- fine at a few hundred rows, but it meant a bare
+ * keyword search with no other filters pulled the entire public-artifacts
+ * table (all four LATERAL joins included) into memory on every call. It's
+ * now a plain ILIKE across the columns a user would actually search by;
+ * good enough for the archive's current size, with real full-text search
+ * (a tsvector column + GIN index, for ranking and multi-word queries) left
+ * as a future improvement, not required here.
+ */
+function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
+  clauses: string[];
+  params: (string | number)[];
+} {
   const clauses: string[] = [`a.status in ${PUBLIC_STATUSES}`];
   const params: (string | number)[] = [];
 
@@ -262,41 +292,131 @@ export async function searchPublicArtifacts(filters: {
     params.push(filters.series);
     clauses.push(`es.code = $${params.length}`);
   }
-  if (filters.year) {
-    params.push(Number(filters.year));
+  // filters.year comes straight from a searchParams string (see /results) --
+  // unlike series/subject codes, it's coerced to a number before binding, so
+  // a non-numeric value (e.g. "abc") must be rejected here rather than sent
+  // to Postgres as NaN, which fails with "invalid input syntax for type
+  // integer" on the int column. A bad year is treated as no year filter at
+  // all, same as an absent one -- not a 404/redirect, since this is a
+  // multi-filter search page, not a single-resource lookup.
+  const year = filters.year ? Number(filters.year) : undefined;
+  if (year !== undefined && Number.isInteger(year)) {
+    params.push(year);
     clauses.push(`ei.year = $${params.length}`);
   }
   if (filters.subject) {
     params.push(filters.subject);
     clauses.push(`s.subject_code = $${params.length}`);
   }
-
-  const sql = `${PUBLIC_ARTIFACT_SELECT} where ${clauses.join(" and ")} order by ei.year desc, s.canonical_name`;
-  const rows = await query<PublicArtifactRow>(sql, params);
-  let records = rows.map(hydratePublicRecord);
-
-  const q = filters.q?.trim().toLowerCase();
+  const q = filters.q?.trim();
   if (q) {
-    records = records.filter((r) =>
-      `${r.title} ${r.subject} ${r.examSeriesName} ${r.year}`.toLowerCase().includes(q)
-    );
+    params.push(`%${q}%`);
+    const p = `$${params.length}`;
+    clauses.push(`(a.title ilike ${p} or s.canonical_name ilike ${p} or es.name ilike ${p})`);
   }
 
-  return records;
+  return { clauses, params };
 }
 
+export const searchPublicArtifacts = cache(async (filters: PublicArtifactFilters): Promise<PublicExamRecord[]> => {
+  const { clauses, params } = buildPublicArtifactFilterClauses(filters);
+  const sql = `${PUBLIC_ARTIFACT_SELECT} where ${clauses.join(" and ")} order by ei.year desc, s.canonical_name`;
+  const rows = await query<PublicArtifactRow>(sql, params);
+  return rows.map(hydratePublicRecord);
+});
+
 /**
- * Cached wrapper around searchPublicArtifacts, for /results. That route
- * reads free-text searchParams (q, series, year, subject), which keeps a
- * page dynamic per-request in Next.js regardless of a route-segment
- * `revalidate` export -- so unlike the other public read paths, this one
- * can't be made ISR at the page level. Caching at the data layer instead:
- * repeated searches (including the unfiltered "show everything" case) hit
- * this cache for up to 60s instead of re-querying Postgres every request.
+ * Cached wrapper around searchPublicArtifacts, for the sitemap's unfiltered
+ * "every public artifact" read. Repeated calls (including the unfiltered
+ * "show everything" case) hit this cache for up to 60s instead of
+ * re-querying Postgres every time. /results uses the paginated version
+ * below instead -- see searchPublicArtifactsPageCached.
  */
 export const searchPublicArtifactsCached = unstable_cache(
   searchPublicArtifacts,
   ["search-public-artifacts"],
+  { revalidate: 60 }
+);
+
+export const RESULTS_PAGE_SIZE = 25;
+const RESULTS_MAX_PAGE_SIZE = 100;
+
+export interface PublicArtifactPage {
+  records: PublicExamRecord[];
+  /** Total rows matching the filters, across all pages -- not just this page's length. */
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+/**
+ * Paginated version of searchPublicArtifacts, for /results -- see the
+ * full-site audit's pagination finding: unfiltered, that route was
+ * rendering all ~300 published rows on one page (2,714 DOM elements, ~950ms
+ * TTFB measured locally). `page`/`limit` are treated the same way `year` is
+ * above: whatever a malformed/out-of-range searchParams value asks for,
+ * clamp to something valid rather than erroring -- a page listing is not
+ * the place for a 404. `limit` is clamped to RESULTS_MAX_PAGE_SIZE so the
+ * param can't be used to opt back into the original unpaginated behavior.
+ *
+ * Total count comes from the same query via `count(*) over()` rather than
+ * a separate COUNT(*) round trip -- one query returns both this page's
+ * rows and the true total.
+ *
+ * Not wrapped in React's cache(): /results calls this exactly once per
+ * request (no duplicate call site the way getPublicArtifactBySlug had), so
+ * there's nothing to dedupe here -- the unstable_cache layer below already
+ * covers the cross-request case, matching searchPublicArtifactsCached's
+ * existing single-layer pattern.
+ */
+export async function searchPublicArtifactsPage(
+  filters: PublicArtifactFilters,
+  pagination: { page?: number; limit?: number }
+): Promise<PublicArtifactPage> {
+  const limit = Math.min(
+    Math.max(1, Number.isInteger(pagination.limit) ? (pagination.limit as number) : RESULTS_PAGE_SIZE),
+    RESULTS_MAX_PAGE_SIZE
+  );
+  const page = Math.max(1, Number.isInteger(pagination.page) ? (pagination.page as number) : 1);
+  const offset = (page - 1) * limit;
+
+  const { clauses, params } = buildPublicArtifactFilterClauses(filters);
+  const where = clauses.join(" and ");
+
+  // Two queries, not one "clever" count(*) over() attached to each
+  // returned row -- that approach silently loses the total whenever OFFSET
+  // skips past every matching row (any page number beyond the last one),
+  // since a window function only annotates rows that actually survive the
+  // LIMIT/OFFSET slice, and none do in that case. Run both concurrently
+  // (fix 3's "independent reads run in parallel" applies here too) so the
+  // extra query costs no more wall-clock time than the slower of the two,
+  // not their sum.
+  const dataParams = [...params, limit, offset];
+  const [rows, countRows] = await Promise.all([
+    query<PublicArtifactRow>(
+      `${PUBLIC_ARTIFACT_SELECT} where ${where} order by ei.year desc, s.canonical_name limit $${dataParams.length - 1} offset $${dataParams.length}`,
+      dataParams
+    ),
+    query<{ total: string }>(`select count(*) as total from (${PUBLIC_ARTIFACT_SELECT} where ${where}) sub`, params),
+  ]);
+
+  const total = Number(countRows[0]?.total ?? 0);
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+
+  return { records: rows.map(hydratePublicRecord), total, page, limit, totalPages };
+}
+
+/**
+ * Cached wrapper around searchPublicArtifactsPage, for /results -- same
+ * reasoning as searchPublicArtifactsCached above (the route reads
+ * searchParams, so it can't be page-level ISR'd; caching at the data layer
+ * instead, keyed on the full filters+pagination argument so different
+ * pages/searches don't collide).
+ */
+export const searchPublicArtifactsPageCached = unstable_cache(
+  searchPublicArtifactsPage,
+  ["search-public-artifacts-page"],
   { revalidate: 60 }
 );
 
@@ -312,10 +432,10 @@ export interface SubjectWithCount {
  * of the browse drill-down. Subjects with nothing recorded yet are left
  * out rather than shown as a dead-end "0 papers" row.
  */
-export async function listPublicSubjectsForInstance(
+export const listPublicSubjectsForInstance = cache(async (
   seriesCode: string,
   year: number
-): Promise<SubjectWithCount[]> {
+): Promise<SubjectWithCount[]> => {
   const rows = await query<{ slug: string | null; name: string; count: string }>(
     `select s.subject_code as slug, s.canonical_name as name, count(*) as count
      from artifacts a
@@ -328,7 +448,7 @@ export async function listPublicSubjectsForInstance(
     [seriesCode, year]
   );
   return rows.map((r) => ({ slug: r.slug ?? "", name: r.name, count: Number(r.count) }));
-}
+});
 
 export interface DownloadableYearFile {
   fileId: string;
@@ -343,10 +463,10 @@ export interface DownloadableYearFile {
  * include), joined to files so an artifact with no file row is left out
  * rather than producing a null entry.
  */
-export async function listPublishedFilesForInstance(
+export const listPublishedFilesForInstance = cache(async (
   seriesCode: string,
   year: number
-): Promise<DownloadableYearFile[]> {
+): Promise<DownloadableYearFile[]> => {
   const rows = await query<{ file_id: string; storage_key: string; title: string }>(
     `select f.id as file_id, f.storage_key, a.title
      from artifacts a
@@ -358,23 +478,23 @@ export async function listPublishedFilesForInstance(
     [seriesCode, year]
   );
   return rows.map((r) => ({ fileId: r.file_id, storageKey: r.storage_key, title: r.title }));
-}
+});
 
 /** Most recently published artifacts, for the homepage "Recently added" list. */
-export async function listRecentPublicArtifacts(limit: number): Promise<PublicExamRecord[]> {
+export const listRecentPublicArtifacts = cache(async (limit: number): Promise<PublicExamRecord[]> => {
   const rows = await query<PublicArtifactRow>(
     `${PUBLIC_ARTIFACT_SELECT} where a.status = 'published' order by a.published_at desc limit $1`,
     [limit]
   );
   return rows.map(hydratePublicRecord);
-}
+});
 
-export async function getPublicArtifactBySlug(
+export const getPublicArtifactBySlug = cache(async (
   seriesCode: string,
   year: number,
   subjectSlug: string,
   slug: string
-): Promise<{ record: PublicExamRecord; related: PublicExamRecord[] } | undefined> {
+): Promise<{ record: PublicExamRecord; related: PublicExamRecord[] } | undefined> => {
   const rows = await query<PublicArtifactRow>(
     `${PUBLIC_ARTIFACT_SELECT}
      where a.status in ${PUBLIC_STATUSES} and es.code = $1 and ei.year = $2 and s.subject_code = $3`,
@@ -390,7 +510,7 @@ export async function getPublicArtifactBySlug(
   const related = rows.filter((r) => r.id !== match.id).map(hydratePublicRecord);
 
   return { record, related };
-}
+});
 
 /**
  * Every publicly-visible artifact for one (series, subject) across all
@@ -400,10 +520,10 @@ export async function getPublicArtifactBySlug(
  * for this subject" list from a single extra query, rather than a per-row
  * existence check for each candidate neighbour.
  */
-export async function listSubjectArtifacts(
+export const listSubjectArtifacts = cache(async (
   seriesCode: string,
   subjectSlug: string
-): Promise<PublicExamRecord[]> {
+): Promise<PublicExamRecord[]> => {
   const rows = await query<PublicArtifactRow>(
     `${PUBLIC_ARTIFACT_SELECT}
      where a.status in ${PUBLIC_STATUSES} and es.code = $1 and s.subject_code = $2
@@ -411,7 +531,7 @@ export async function listSubjectArtifacts(
     [seriesCode, subjectSlug]
   );
   return rows.map(hydratePublicRecord);
-}
+});
 
 // --- CLI: coverage matrix (spec section 11.3) -----------------------------
 
