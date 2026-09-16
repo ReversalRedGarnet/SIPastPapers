@@ -1,13 +1,17 @@
 # SIPastPapers
 
-Private, in-progress project. A searchable archive of historical Solomon
-Islands national examination papers (SIF3/SIJSC otherwise known as Year 9, SISC Level 1 otherwise known as Year 11, SISC Level
-2/SINF6 otherwise known as Year 12), built for public use.
+A searchable archive of historical Solomon Islands national examination
+papers (SIF3/SIJSC otherwise known as Year 9, SISC Level 1 otherwise known
+as Year 11, SISC Level 2/SINF6 otherwise known as Year 12), built for
+public use.
 
-**Status:** Phase 3 — Next.js app backed by a real Postgres (Neon) database
-and file storage (local filesystem by default, Cloudflare R2 optional —
-see "What's implemented" below). No authentication, no public
-release.
+**Status:** Phase 3 — live at
+[si-past-papers.vercel.app](https://si-past-papers.vercel.app), with 291
+published papers across all three exam levels. Next.js app backed by a
+real Postgres (Neon) database and file storage (local filesystem by
+default for dev, Cloudflare R2 in production — see "What's implemented"
+below). No authentication — no accounts, and no admin HTTP surface (admin
+is a local-only CLI; see "Admin" below).
 
 See [`PROJECT_SPEC.md`](./PROJECT_SPEC.md) for the full technical and
 governance specification. This README only describes what currently exists
@@ -26,9 +30,14 @@ in the repository.
 - **Public pages**, reading live from that database via
   [`src/lib/db/queries.ts`](./src/lib/db/queries.ts):
   - `/` — homepage with search bar and exam level / year / subject selectors.
-  - `/results` — filtered results table (published artifacts only).
-  - `/browse` — year × subject coverage matrix per exam series (public-safe:
-    only shows "published" / "not yet recovered" / "no record yet").
+  - `/results` — filtered, paginated results table (published artifacts
+    only).
+  - `/browse` — click-through by exam level → year → subject → paper
+    (`/browse` → `/browse/[series]` → `/browse/[series]/[year]` →
+    `/browse/[series]/[year]/[subject]`); a series or year with nothing
+    published yet is shown with a "No papers yet" badge rather than
+    hidden. (The full year × subject coverage matrix is a CLI-only view —
+    see `coverage` under "Admin" below.)
   - `/exams/[series]/[year]/[subject]/[artifact]` — document page, 404s if
     nothing published exists at that address.
   - `/about` — project purpose, ownership, rights statement, correction process.
@@ -55,11 +64,17 @@ in the repository.
     enum (`teacher-verified` / `personal-collection` /
     `institutional-submission` / `other`), not free text — see spec
     section 11.2 for what each value means and an important caveat about
-    what `--approved-by` does (and doesn't) mean right now.
+    what `--approved-by` does (and doesn't) mean right now. Also has a
+    bulk form, `approve-rights --series <code> --year-range <yyyy-yyyy>
+    ... [--confirm]`, for approving every matching unapproved artifact at
+    once (dry-run unless `--confirm` is passed).
   - `publish <artifact-id>` — the only place status becomes `published`.
     Refuses, printing exactly what's missing, unless the rights record
     already has basis, approved_by and evidence_uri set. This safeguard
-    didn't exist in the old admin web UI.
+    didn't exist in the old admin web UI. Also has a bulk form, `publish
+    --series <code> --year-range <yyyy-yyyy> [--confirm]`, which publishes
+    every matching artifact whose rights are already approved and skips
+    (with a stated reason) any that aren't.
   - `unpublish <artifact-id>` — takes a published artifact back off the
     public site; there was previously no way to do this at all.
   - `list` — every artifact with its id/status/rights status.
@@ -113,7 +128,10 @@ exact SHA-256/unique-key checks, and everything else in
 
 ## Stack
 
-- Next.js / TypeScript (App Router) — public read-only frontend only
+- Next.js / TypeScript (App Router) — public frontend; the only write path
+  is the "report a problem" form on each paper page (`reportIssueAction`
+  in `src/app/exams/[series]/[year]/[subject]/[artifact]/actions.ts`),
+  which inserts an `issues` row
 - A local CLI (`scripts/cli.ts`, run via `tsx`) for all admin/ingest
   operations — see spec section 11
 - Postgres (Neon), via the plain `pg` client — schema in
@@ -138,8 +156,19 @@ Any locally-stored uploaded files are created on first run under
 `local-storage/` (gitignored, disposable). With `STORAGE_BACKEND=r2`, files
 go to the configured R2 bucket instead.
 
+## License
+
+Code is MIT-licensed — see [`LICENSE`](./LICENSE). This covers the
+codebase only, not rights to the archived exam content itself, which is
+tracked separately per-artifact (see `rights_records` in
+[`PROJECT_SPEC.md`](./PROJECT_SPEC.md) section 4.2 and the correction
+process on the `/about` page).
+
 ## Non-goals
 
-- No public hosting until rights are confirmed with MEHRD/schools.
+- No implying MEHRD/institutional endorsement of hosted material unless
+  explicitly granted — publication currently proceeds under a documented,
+  non-institutional rights basis (mainly `teacher-verified`; see
+  `PROJECT_SPEC.md` section 11.2), not confirmed MEHRD permission.
 - No unreleased/current exam material, ever.
 - No accounts, no payments, no AI-generated exam content.

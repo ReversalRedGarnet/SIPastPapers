@@ -63,8 +63,8 @@ Do not wait for 100% historical completeness. Release a coherent, explicitly lab
 1. Homepage: search bar + three primary selectors (exam level, year, subject).
 2. Results page: cards/table showing year, level, subject, artifact type, page count, verification status and actions.
 3. Document page: title, metadata, provenance, preview/viewer, download button, related artifacts, report-issue link.
-4. Browse page: year matrix and subject matrix for users who do not know exactly what to search.
-5. Collection page: overview of each exam family and its historical availability.
+4. Browse page: year matrix and subject matrix for users who do not know exactly what to search. *(Built as a click-through — series → year → subject → paper — rather than a matrix view; empty series/years are flagged with a "No papers yet" badge instead of shown as grid cells. The full year × subject coverage matrix is a CLI-only view — section 11.3.)*
+5. Collection page: overview of each exam family and its historical availability. *(Not built as a separate page — `/browse`'s exam-level → year → subject → paper click-through and the CLI's `coverage` matrix (section 11.3) serve this role instead.)*
 6. About page: project purpose, ownership, open-source link, rights statement, correction/takedown process.
 7. Admin operations: a local-only CLI (no web UI, no authentication surface) for ingest, rights approval, publication and audit logs — see section 11.
 
@@ -472,15 +472,25 @@ archive is visible without a web UI.
 
 ### 12.1 URL strategy
 
+As built, browsing and the final document page are two separate route
+trees rather than one nested hierarchy under `/exams`:
+
 ```
 /
-/exams
-/exams/sisc-l1
-/exams/sisc-l1/2018
-/exams/sisc-l1/2018/mathematics
+/browse
+/browse/sisc-l1
+/browse/sisc-l1/2018
+/browse/sisc-l1/2018/mathematics
 /exams/sisc-l1/2018/mathematics/paper-1
-/exams/sisc-l1/2018/mathematics/paper-1/marking-scheme
+/exams/sisc-l1/2018/mathematics/marking-scheme
 ```
+
+`/exams/{series}/{year}/{subject}/{artifact}` is the document page — a
+single leaf segment (a slug like `paper-1` or `marking-scheme`, derived
+from the artifact's type/paper number, not a nested sub-path), reached
+by clicking through `/browse`, not by a `/exams` index or intermediate
+`/exams/...` listing pages. A marking scheme is its own sibling artifact
+page, not a suffix on the question paper's URL.
 
 Stable URLs matter. Do not encode internal database UUIDs into the public URL unless necessary. Use human-readable slugs with redirects if taxonomy changes.
 
