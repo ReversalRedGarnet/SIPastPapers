@@ -96,6 +96,10 @@ function requireFlag(flags: Record<string, string>, name: string): string {
   return value;
 }
 
+// `never` is a special return type meaning "this function never actually
+// finishes normally" -- it always either throws or, as here, ends the
+// whole program (`process.exit(1)`). It's a signal to both readers and
+// TypeScript that no code after calling `fail(...)` will ever run.
 function fail(message: string): never {
   console.error(`Error: ${message}`);
   process.exitCode = 1;
@@ -596,6 +600,13 @@ Commands:
 `;
 
 async function main(): Promise<void> {
+  // `process.argv` is the full list of words typed on the command line to
+  // start this program (the first two are always the path to Node itself
+  // and to this script, hence `.slice(2)` to drop those). `...rest` in
+  // array destructuring (see artifact-naming.ts for the basic idea) means
+  // "put the first item in `command`, and gather every remaining item into
+  // a new array called `rest`" -- e.g. running `ingest myfile.pdf --series
+  // sisc-l1` makes `command` "ingest" and `rest` the rest of those words.
   const [command, ...rest] = process.argv.slice(2);
   const args = parseArgs(rest);
 

@@ -22,6 +22,14 @@ import type {
 } from "@/types/domain";
 
 // --- row shapes as they come back from postgres (snake_case) ---------------
+//
+// Postgres column names are conventionally written like `subject_code`
+// (called "snake_case"), while the rest of this project's JavaScript/
+// TypeScript code uses `subjectCode` ("camelCase") by convention instead.
+// The `*Row` interfaces below describe data exactly as the database hands
+// it back (snake_case field names); the "mapping helpers" further down
+// convert each one into the camelCase shapes (from src/types/domain.ts)
+// that the rest of the app actually works with.
 
 interface ExamSeriesRow {
   id: string;
@@ -68,6 +76,9 @@ interface RightsRow {
  * instead of zero). Left-joined, so the file/source/verification/rights
  * columns are null when an artifact has none yet.
  */
+// `extends` on an interface means "this includes everything ArtifactBaseRow
+// already has, plus these extra fields" -- rather than retyping every field
+// from ArtifactBaseRow again here, this just adds to it.
 interface PublicArtifactRow extends ArtifactBaseRow {
   file_id: string | null;
   file_sha256: string | null;
@@ -95,6 +106,18 @@ function toSubject(row: SubjectRow): Subject {
   };
 }
 
+// This whole thing is a SQL query, written as plain text (a template
+// literal -- see src/lib/format.ts) and sent to Postgres to run. In plain
+// English, it says: "Get these columns (id, type, title, and so on) from
+// the `artifacts` table, and for each artifact, also pull in matching
+// details from the `exam_instances`, `exam_series`, and `subjects` tables."
+// A `join` is how SQL combines rows from separate tables that are related
+// by a shared id -- e.g. `join exam_instances ei on ei.id =
+// a.exam_instance_id` means "match each artifact to the one exam_instance
+// row whose id equals the artifact's exam_instance_id." The short names
+// (`a`, `ei`, `es`, `s`) are just local nicknames ("aliases") for each
+// table, used so the rest of the query doesn't have to spell out the full
+// table name every time.
 const ARTIFACT_BASE_SELECT = `
   select
     a.id, a.exam_instance_id, a.subject_id, a.type, a.paper_no, a.title,
@@ -134,6 +157,14 @@ const PUBLIC_ARTIFACT_SELECT = `
   join exam_instances ei on ei.id = a.exam_instance_id
   join exam_series es on es.id = ei.exam_series_id
   join subjects s on s.id = a.subject_id
+  -- A plain "join" (above) only keeps a row if a match is found in the
+  -- other table. A "left join" keeps the artifact row even when there's no
+  -- match (e.g. no file has been uploaded for it yet) -- the extra columns
+  -- just come back empty (null) in that case instead of dropping the whole
+  -- row. "lateral (...)" runs a small query-within-a-query separately for
+  -- each artifact row, here to fetch just its single most recently added
+  -- file (order by created_at desc limit 1) -- this is what a "subquery"
+  -- is: a query nested inside another query.
   left join lateral (
     select id, sha256, mime, bytes
     from files
@@ -180,6 +211,12 @@ function hydratePublicRecord(row: PublicArtifactRow): PublicExamRecord {
     status: row.status,
     verification: row.verification_status ?? "unverified",
     rights: row.rights_status ?? "unknown",
+    // A `!` right after a value is a "non-null assertion": it tells
+    // TypeScript "trust me, this specific value isn't actually null here,
+    // even though its type says it could be." It's used here because we've
+    // just checked `row.file_id !== null` above, so we (the programmer)
+    // know the other file_* fields must be filled in too -- but TypeScript
+    // can't work that connection out on its own from the check alone.
     file:
       row.file_id !== null
         ? { id: row.file_id, sha256: row.file_sha256!, mime: row.file_mime!, bytes: row.file_bytes! }
@@ -187,6 +224,11 @@ function hydratePublicRecord(row: PublicArtifactRow): PublicExamRecord {
     source:
       row.source_type !== null
         ? {
+            // `Source["sourceType"]` reaches into the Source interface (see
+            // src/types/domain.ts) and pulls out just the type of its
+            // `sourceType` field, so this line means "treat this raw
+            // database string as whatever type Source.sourceType expects"
+            // (paired with `as`, the type assertion from artifact-naming.ts).
             type: row.source_type as Source["sourceType"],
             organization: row.source_organization,
             attribution: row.source_attribution,
@@ -209,6 +251,14 @@ function hydratePublicRecord(row: PublicArtifactRow): PublicExamRecord {
 // scripts/cli.ts runs as one long-lived process across a whole batch
 // operation, where memoizing a read could serve stale data across calls
 // that are supposed to see the effect of an earlier write in the same run.
+// `cache(async () => {...})` is a "higher-order function": cache() itself
+// is a function whose job is to take another function and hand back a new,
+// wrapped version of it with extra behavior added (here, remembering the
+// result -- see the comment above). The `async () => { ... }` part is the
+// actual function being wrapped -- an arrow function (see
+// artifact-naming.ts) that takes no inputs. Also, `rows.map(toExamSeries)`
+// is the same `.map()` from earlier, just handed an existing named
+// function to run on each item instead of writing a new inline one.
 export const listExamSeries = cache(async (): Promise<ExamSeries[]> => {
   const rows = await query<ExamSeriesRow>("select * from exam_series order by name");
   return rows.map(toExamSeries);
@@ -285,6 +335,17 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
   clauses: string[];
   params: (string | number)[];
 } {
+  // `$1`, `$2`, etc. are "parameterized query" placeholders: instead of
+  // gluing a visitor's actual search text directly into the SQL string
+  // (which would let someone type something malicious into the search box
+  // to manipulate the query -- an attack called "SQL injection"), the SQL
+  // text just has numbered blanks, and the real values are sent alongside
+  // it separately in the `params` list. Postgres itself safely fills in
+  // blank $1 with params[0], $2 with params[1], and so on -- text typed by
+  // a visitor is always treated as plain data, never as part of the query's
+  // actual instructions. `$${params.length}` below just calculates which
+  // numbered blank to use next, based on how many params have been added
+  // to the list so far.
   const clauses: string[] = [`a.status in ${PUBLIC_STATUSES}`];
   const params: (string | number)[] = [];
 
@@ -308,6 +369,9 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
     params.push(filters.subject);
     clauses.push(`s.subject_code = $${params.length}`);
   }
+  // `?.` ("optional chaining") means "only call .trim() if filters.q
+  // actually has a value; if it's missing, just skip straight to
+  // `undefined` instead of crashing by trying to call .trim() on nothing."
   const q = filters.q?.trim();
   if (q) {
     params.push(`%${q}%`);
@@ -332,6 +396,12 @@ export const searchPublicArtifacts = cache(async (filters: PublicArtifactFilters
  * re-querying Postgres every time. /results uses the paginated version
  * below instead -- see searchPublicArtifactsPageCached.
  */
+// `unstable_cache(...)` is Next.js's own caching helper (different from
+// React's `cache()` used above -- see that comment for the distinction).
+// It's another higher-order function: give it a function, a name to
+// identify this cache entry by, and a duration, and it hands back a new
+// version of that function which remembers its answer for that long,
+// shared across every visitor, not just within one page load.
 export const searchPublicArtifactsCached = unstable_cache(
   searchPublicArtifacts,
   ["search-public-artifacts"],
@@ -390,6 +460,11 @@ export async function searchPublicArtifactsPage(
   // (fix 3's "independent reads run in parallel" applies here too) so the
   // extra query costs no more wall-clock time than the slower of the two,
   // not their sum.
+  // `...params` is the "spread" operator: it unpacks all the items already
+  // in `params` into this new array, so `dataParams` ends up as "everything
+  // that was in params, plus limit, plus offset" -- without spread, this
+  // would need a loop to copy each item across one at a time.
+  // `Promise.all` again (see src/app/page.tsx) -- both queries run together.
   const dataParams = [...params, limit, offset];
   const [rows, countRows] = await Promise.all([
     query<PublicArtifactRow>(
@@ -650,6 +725,12 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
   // file is orphaned in storage rather than referenced by a row —
   // acceptable for now; a real ingestion pipeline would reconcile orphans
   // via the storage/DB export described in spec section 16.3.
+  // `createHash("sha256").update(bytes).digest("hex")` runs the file's raw
+  // bytes through the SHA-256 hashing algorithm, producing a short, fixed-
+  // length fingerprint of the file's exact contents (as a hex-digit
+  // string). The same file always produces the same hash, and changing
+  // even one byte produces a completely different one -- useful here for
+  // detecting duplicate uploads and confirming a file hasn't been altered.
   const sha256 = createHash("sha256").update(input.file.buffer).digest("hex");
   const fileName = generateCanonicalFileName({
     examSeriesSlug: series.code,
@@ -667,13 +748,28 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
   });
   await getStorageProvider().put(storageKey, input.file.buffer, input.file.mime);
 
+  // `withTransaction(async () => {...})` (see src/lib/db/client.ts) takes a
+  // function containing every database change that has to succeed or fail
+  // together as one unit -- if anything inside throws partway through,
+  // every change made so far in this block is undone automatically.
   return withTransaction(async () => {
+    // `let` (rather than `const`) is used for `examInstance` because it
+    // might be reassigned a few lines down -- `const` variables can never
+    // be assigned a new value after their first one. `randomUUID()`
+    // generates a fresh, effectively-guaranteed-unique id string, used
+    // throughout this file as the `id` for every new database row.
+    // `!examInstance` reads as "if there is no exam instance yet" --
+    // `undefined` (what queryOne returns when nothing matches) counts as
+    // "false-like" here, the same way `!` worked on a real boolean earlier.
     let examInstance = await queryOne<{ id: string }>(
       "select id from exam_instances where exam_series_id = $1 and year = $2",
       [series.id, input.year]
     );
     if (!examInstance) {
       const id = randomUUID();
+      // `insert into <table> (<columns>) values (<one $-placeholder per
+      // column>)` is SQL's way of adding a brand-new row -- as opposed to
+      // `select`, which only reads existing rows.
       await query(
         "insert into exam_instances (id, exam_series_id, year, official_name) values ($1, $2, $3, null)",
         [id, series.id, input.year]
@@ -729,6 +825,12 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
       [randomUUID(), artifactId]
     );
 
+    // `{ title, sha256 }` is "shorthand property syntax": when a variable's
+    // name already matches the object key you want, you can write just the
+    // name once instead of `{ title: title, sha256: sha256 }`. The database
+    // column this is going into only stores plain text, so `JSON.stringify`
+    // converts the object into a text representation of it first (the
+    // reverse of `JSON.parse`, mentioned in an earlier comment above).
     await query(
       `insert into audit_events (id, actor_id, event_type, object_type, object_id, metadata)
        values ($1, null, 'artifact_created', 'artifact', $2, $3)`,
@@ -938,6 +1040,14 @@ export async function checkRightsGate(artifactId: string): Promise<RightsGateSta
  * (returning what's missing) otherwise. This is a new safeguard: rights
  * approval and publication are now two separate, explicit CLI steps.
  */
+// `{ title: string } | { missing: string[] }` is a union (see
+// src/types/domain.ts) of two entirely different object shapes: this
+// function either succeeds and hands back a `title`, or fails and hands
+// back what's `missing` -- never both, and never neither. Callers have to
+// check which one they actually got (commonly with `"missing" in result`,
+// as seen in scripts/cli.ts) before reading either field, which is exactly
+// what makes this safer than, say, returning a title that's sometimes an
+// empty string to mean failure.
 export async function publishArtifact(
   artifactId: string
 ): Promise<{ title: string } | { missing: string[] }> {

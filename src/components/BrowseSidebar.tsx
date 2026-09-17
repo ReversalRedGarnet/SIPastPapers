@@ -39,6 +39,9 @@ export function BrowseSidebar({
                 <span>{seriesDisplayLabel(s.code)}</span>
                 {isEmpty && <Badge tone="neutral">No papers yet</Badge>}
               </Link>
+              {/* `&&` chains can have more than two conditions -- every one has
+                  to be true (not undefined, not empty) before the JSX at the
+                  end is shown at all. */}
               {isActive && years && years.length > 0 && (
                 <ul className="browse-sidebar__years">
                   {years.map((y) => {

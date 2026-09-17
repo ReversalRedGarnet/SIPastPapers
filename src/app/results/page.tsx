@@ -22,6 +22,15 @@ export const metadata: Metadata = {
 // searchPublicArtifactsPageCached in src/lib/db/queries.ts.
 export const dynamic = "force-dynamic";
 
+// "searchParams" are the bits of a web address after the `?`, e.g. in
+// `/results?q=maths&year=2019`, searchParams would be `{ q: "maths", year:
+// "2019" }`. Next.js automatically reads these from the address bar and
+// hands them to the page -- nothing here has to parse the URL by hand.
+// Each field ending in `?` (like `q?: string`) is "optional": the visitor
+// might not have included that particular one in the address, so its
+// value might be missing entirely rather than just an empty string.
+// `searchParams` itself is wrapped in a `Promise<...>` because Next.js
+// makes it available slightly asynchronously -- see the `await` below.
 interface ResultsPageProps {
   searchParams: Promise<{
     q?: string;
@@ -39,6 +48,10 @@ function buildPageHref(
   filters: { q?: string; series?: string; year?: string; subject?: string; limit?: string },
   page: number
 ): string {
+  // `URLSearchParams` is a built-in JavaScript helper for building the
+  // "?key=value&key2=value2" part of a web address correctly (handling
+  // spaces and special characters the right way), instead of gluing text
+  // together by hand.
   const params = new URLSearchParams();
   if (filters.q) params.set("q", filters.q);
   if (filters.series) params.set("series", filters.series);
@@ -50,11 +63,23 @@ function buildPageHref(
   return qs ? `/results?${qs}` : "/results";
 }
 
+// `{ searchParams }: ResultsPageProps` destructures Next.js's page-props
+// object right in the function's parameter list, pulling out just the one
+// field this page needs -- the same destructuring idea as before, just
+// written directly in the parameter list instead of on its own line
+// inside the function body.
 export default async function ResultsPage({ searchParams }: ResultsPageProps) {
   const filters = await searchParams;
   const pageParam = filters.page ? Number(filters.page) : undefined;
   const limitParam = filters.limit ? Number(filters.limit) : undefined;
 
+  // This combines both destructuring styles at once: the outer square
+  // brackets unpack Promise.all's list of four results (array
+  // destructuring, as on the homepage), and the curly braces around the
+  // *first* one additionally unpack that single result's fields by name
+  // (object destructuring, as in artifact-naming.ts) -- all in one
+  // statement.
+  //
   // Three independent reads (the page's own paginated search, plus the
   // three filter dropdowns' option lists) run concurrently -- none depends
   // on another's result.
@@ -65,6 +90,9 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
     listYears(),
   ]);
 
+  // `Boolean(x)` converts any value to a plain true/false. Here, the result
+  // is true if at least one filter has a real (non-empty) value -- `||`
+  // means "or," so this reads as "q is set OR series is set OR ...".
   const hasFilters = Boolean(filters.q || filters.series || filters.year || filters.subject);
   const rangeStart = total === 0 ? 0 : (page - 1) * limit + 1;
   const rangeEnd = Math.min(page * limit, total);
@@ -140,6 +168,11 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
         </p>
       )}
 
+      {/* Ternaries (see src/lib/artifact-naming.ts) can be chained: this reads
+          as "if total is 0, show this; otherwise, if records is empty, show
+          that; otherwise, show the real results below" -- an if/else-if/else
+          written as one expression instead of separate statements, which
+          JSX requires since you can't write a plain `if` inside {...}. */}
       {total === 0 ? (
         <p className="empty-state">
           No published papers match those filters yet. Try clearing a filter
@@ -170,6 +203,12 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                 </tr>
               </thead>
               <tbody>
+                {/* Arrow functions can also have a `{ ... }` "block body" with a
+                    real `return` statement, instead of the shorter one-line form
+                    used elsewhere in this project (`(s) => <option>...</option>`,
+                    with no `{}` or `return` needed) -- useful here because a
+                    variable (`href`) needs to be worked out first, before the JSX
+                    that uses it. */}
                 {records.map((r) => {
                   const href = `/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`;
                   return (

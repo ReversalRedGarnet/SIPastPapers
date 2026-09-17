@@ -16,6 +16,9 @@ import type { NextRequest } from "next/server";
  * in-memory tradeoffs below.
  */
 
+// The underscore in `60_000` is just a readability separator (like a comma
+// in "60,000") -- JavaScript ignores it completely, so this is exactly the
+// number 60000.
 const WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 5;
 
@@ -32,6 +35,11 @@ interface Bucket {
  * one place) without pulling in an external store (Redis/Upstash) that
  * this low-traffic site doesn't otherwise need.
  */
+// A `Map` (unlike the plain lookup objects seen elsewhere, e.g.
+// src/lib/format.ts's Record type) is a data structure specifically built
+// for adding, reading, and removing key-value pairs *while the program is
+// running* -- exactly what's needed here, since visitor IP addresses
+// aren't known in advance.
 const buckets = new Map<string, Bucket>();
 
 /**
@@ -44,6 +52,9 @@ const SWEEP_THRESHOLD = 1000;
 
 function sweepExpired(now: number): void {
   if (buckets.size < SWEEP_THRESHOLD) return;
+  // Looping over a Map with `for...of` hands back each entry as a [key,
+  // value] pair, which the `[key, bucket]` here immediately destructures
+  // (see artifact-naming.ts) into two separate named variables.
   for (const [key, bucket] of buckets) {
     if (now >= bucket.resetAt) buckets.delete(key);
   }

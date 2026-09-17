@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 
+// `Pool | undefined` -- a union again (see src/types/domain.ts), this time
+// with `undefined` instead of `null`: this variable either holds a real
+// Pool once one's been created, or is simply "not set yet."
 let pool: Pool | undefined;
 
 // --- retry-with-backoff for transient connection failures -------------------
@@ -15,6 +18,12 @@ let pool: Pool | undefined;
 // fail identically on retry.
 const TRANSIENT_CONNECTION_ERROR_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE"]);
 
+// `unknown` means "this could be absolutely anything -- a caught error
+// could be a real Error, or a plain string, or something else entirely."
+// Unlike TypeScript's looser `any`, a value typed `unknown` can't be used
+// for much until its actual type is checked, which is exactly what the
+// `instanceof Error` check below does: "is this specific value actually an
+// Error object?"
 function isTransientConnectionError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const code = (err as NodeJS.ErrnoException).code;
@@ -66,10 +75,22 @@ function getRetryBudget(): RetryBudget {
  * immediately. With the "web" profile's retryAttempts of 1, this makes zero
  * retries — the loop below still runs once, just never re-enters.
  */
+// The `<T>` here is a "generic": a placeholder type, filled in by whatever
+// this function is actually used with. `withRetry` needs to work for any
+// kind of result -- a list of rows, a connection, anything -- so instead
+// of hard-coding one specific return type, `T` stands in for "whatever
+// type `fn` resolves to," and TypeScript fills it in automatically each
+// time this function is called.
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   const { retryAttempts } = getRetryBudget();
   let attempt = 0;
+  // `for (;;)` with nothing in any of the three slots is a loop that never
+  // ends on its own -- it only stops via the `return` inside, or the
+  // `throw` that re-raises an error, both further down.
   for (;;) {
+    // `try { ... } catch (err) { ... }`: run the code in `try`, and if it
+    // throws an error partway through, jump straight to `catch` instead of
+    // crashing the whole program, with the error available as `err`.
     try {
       return await fn();
     } catch (err) {
@@ -131,6 +152,13 @@ function getPool(): Pool {
  */
 const activeClient = new AsyncLocalStorage<PoolClient>();
 
+// `<T extends QueryResultRow = QueryResultRow>` builds on the generic idea
+// above: `extends QueryResultRow` restricts `T` to only ever be filled in
+// with something shaped like a database row, and `= QueryResultRow` is a
+// fallback used when the caller doesn't specify one at all. Separately,
+// `params: unknown[] = []` gives `params` a default value: if a caller
+// doesn't pass anything for it, it's automatically treated as an empty
+// list rather than being missing.
 export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params: unknown[] = []
@@ -189,6 +217,10 @@ export async function withTransaction<T>(fn: () => Promise<T>): Promise<T> {
   // Retrying connect() is safe here: nothing has been sent to Postgres yet,
   // so a fresh attempt on a fresh connection can't duplicate or skip work.
   const client = await withRetry(() => getPool().connect());
+  // A `finally` block (added on to try/catch -- see withRetry above) always
+  // runs last, whether the `try` succeeded or the `catch` had to handle an
+  // error. It's the right place for cleanup that must happen either way --
+  // here, always giving the connection back to the pool.
   try {
     await client.query("begin");
     const result = await activeClient.run(client, fn);
