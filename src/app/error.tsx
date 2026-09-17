@@ -9,6 +9,11 @@ import { useEffect } from "react";
 // replaces the whole <html>/<body>, not used here) would lose that chrome.
 // Metadata exports aren't supported in a Client Component, so this page has
 // no <title> override; it inherits the root layout's default title.
+// `Error & { digest?: string }` is an "intersection type" (note the `&`,
+// not `|`): it means this value must satisfy *both* sides at once -- a
+// real, standard Error, *and* it must additionally have this optional
+// `digest` field. `retry: () => void` is a function type: "this prop must
+// be a function that takes no inputs and doesn't hand anything back."
 export default function Error({
   error,
   retry,
@@ -16,6 +21,11 @@ export default function Error({
   error: Error & { digest?: string };
   retry: () => void;
 }) {
+  // `useEffect` is a hook (see src/components/SiteNav.tsx) for running some
+  // code as a *side effect* of rendering -- here, logging the error --
+  // rather than as part of describing what the page looks like. The `[error]`
+  // at the end is its "dependency list": this effect only re-runs when
+  // `error` itself changes to a new value, not on every single re-render.
   useEffect(() => {
     console.error(error);
   }, [error]);

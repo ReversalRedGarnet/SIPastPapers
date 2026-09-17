@@ -3,11 +3,22 @@ import { LocalFilesystemStorage } from "./local-fs";
 import { R2Storage } from "./r2";
 import type { StorageProvider } from "./types";
 
+// "Re-exporting": this file passes StorageProvider/PutResult/buildStorageKey
+// straight through from ./types, without using them itself, purely so
+// other files can `import { buildStorageKey } from "@/lib/storage"` (this
+// file) instead of having to know it actually lives in a different,
+// more specific file.
 export type { StorageProvider, PutResult } from "./types";
 export { buildStorageKey } from "./types";
 
 let instance: StorageProvider | undefined;
 
+// `process.env` holds every environment variable available to this
+// running program (see the glossary in HOW-THIS-APP-WORKS.md). Writing
+// `process.env[name]` -- square brackets with a variable inside -- looks
+// up whichever variable name is currently stored in `name`, which lets
+// this one function work for any environment variable name a caller asks
+// for, rather than being hard-coded to check one specific name.
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {

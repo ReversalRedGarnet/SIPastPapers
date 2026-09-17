@@ -33,6 +33,12 @@ function isNotFoundError(err: unknown): boolean {
  * see src/lib/storage/r2.test.ts.
  */
 export class R2Storage implements StorageProvider {
+  // `Pick<S3Client, "send">` is a "utility type": instead of writing a
+  // brand-new type by hand, it builds one automatically from an existing
+  // type (S3Client) by keeping only the named piece(s) -- here, just the
+  // `send` method. This class only ever calls `.send(...)`, so it asks for
+  // exactly that, which is also what lets tests substitute a much simpler
+  // fake object in place of a real S3Client (see the comment above).
   private readonly client: Pick<S3Client, "send">;
   private readonly bucket: string;
 
@@ -92,6 +98,10 @@ export class R2Storage implements StorageProvider {
       const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
       if (!result.Body) return null;
       if (!(result.Body instanceof Readable)) {
+        // `typeof` here is a *runtime* JavaScript check ("what kind of
+        // value is this while the program is actually running?") -- a
+        // different thing from a TypeScript type annotation like `: string`,
+        // which only exists before the code runs, to catch mistakes early.
         throw new Error(`R2 GetObject for "${key}" returned a non-Node stream body (got ${typeof result.Body})`);
       }
       return result.Body;

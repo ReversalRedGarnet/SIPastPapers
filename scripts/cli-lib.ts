@@ -35,6 +35,9 @@ export function isLikelyPdf(buffer: Buffer): boolean {
   return buffer.length > 4 && buffer.subarray(0, 4).toString("ascii") === "%PDF";
 }
 
+// A two-shape union again (see src/lib/db/queries.ts's publishArtifact) --
+// either `{ ok: true }` alone, or `{ ok: false, reason: ... }` with an
+// explanation attached.
 export function validatePdfReadable(filePath: string): { ok: true } | { ok: false; reason: string } {
   if (path.extname(filePath).toLowerCase() !== ".pdf") {
     return { ok: false, reason: "not a .pdf file" };

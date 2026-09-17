@@ -22,6 +22,8 @@ async function loadContext(seriesCode: string, yearParam: string) {
   const series = examSeries.find((s) => s.code === seriesCode);
   if (!series) return undefined;
   const years = listBrowseYears();
+  // `.includes()` checks whether a list contains a given value at all,
+  // returning a plain true/false.
   if (!years.includes(year)) return undefined;
   return { examSeries, series, years, year };
 }

@@ -1,3 +1,6 @@
+// `Link` is Next.js's version of an HTML link (`<a>`). Using it instead of
+// a plain link lets Next.js navigate to the new page without a full,
+// slower browser page reload.
 import Link from "next/link";
 import { listExamSeries, listRecentPublicArtifacts, listSubjects, listYears } from "@/lib/db/queries";
 import { seriesDisplayLabel } from "@/lib/format";
@@ -8,7 +11,27 @@ import { seriesDisplayLabel } from "@/lib/format";
 // at the cost of up to ~5 minutes' staleness after a fresh publish.
 export const revalidate = 300;
 
+// This whole file describes the homepage. Because the function is
+// `export default`, Next.js automatically treats it as "the page that
+// lives at this file's address" -- there's no separate step to wire it up.
+// It's also a "Server Component": by default in this project, every page
+// runs on the website's own server, not in the visitor's browser, which is
+// what lets it safely talk to the database directly below. The function is
+// declared `async` because it needs to `await` (pause and wait for) slow
+// work -- here, several database reads -- before it has everything it
+// needs to describe the finished page.
 export default async function HomePage() {
+  // `await` pauses this function until whatever's on its right finishes,
+  // then continues with the result. `Promise.all([...])` runs a whole list
+  // of separate slow operations *at the same time* instead of one after
+  // another, and only continues once every one of them is done -- so all
+  // four database questions below happen together instead of one, then the
+  // next, then the next (see the comment beneath for why that's safe here).
+  // The square brackets on the left (`const [a, b, c, d] = ...`) are "array
+  // destructuring": Promise.all hands back a list of four results in the
+  // same order they were requested, and this line unpacks that list into
+  // four separately named variables in one step.
+  //
   // Four independent reads -- none depends on another's result -- so they
   // run concurrently instead of as four sequential round trips to Neon.
   const [examSeries, subjects, years, recent] = await Promise.all([
@@ -18,6 +41,14 @@ export default async function HomePage() {
     listRecentPublicArtifacts(5),
   ]);
 
+  // Everything from here to the end of the function is "JSX" -- HTML-like
+  // markup written directly inside the code, describing what should appear
+  // on the page. It's not real HTML: anything inside curly braces `{...}`
+  // is regular code (a value, a variable, an expression) that gets dropped
+  // into the page at that spot. The outer `<>` and `</>` are an empty
+  // "Fragment" -- a wrapper with no visual effect of its own, used because
+  // JSX requires everything to be wrapped in a single top-level tag, even
+  // when there's no sensible real element to wrap things in.
   return (
     <>
       <h1 className="visually-hidden">SI National Exam Archive</h1>
@@ -54,6 +85,12 @@ export default async function HomePage() {
                 </label>
                 <select id="series" name="series" defaultValue="">
                   <option value="">Any exam level</option>
+                  {/* `.map()` turns each item in a list into something else -- here,
+                      each exam series becomes one <option>. It's the standard way to
+                      render a list of JSX elements from a list of data. React needs a
+                      `key` on each item produced this way (a stable, unique value, not
+                      an array position) so it can efficiently tell which items changed
+                      the next time this list re-renders. */}
                   {examSeries.map((s) => (
                     <option key={s.code} value={s.code}>
                       {seriesDisplayLabel(s.code)}
@@ -82,6 +119,8 @@ export default async function HomePage() {
                 </label>
                 <select id="subject" name="subject" defaultValue="">
                   <option value="">Any subject</option>
+                  {/* `??` again (see src/lib/format.ts) -- use the subject code if it
+                      has one, otherwise fall back to its id. */}
                   {subjects.map((s) => (
                     <option key={s.id} value={s.subjectCode ?? s.id}>
                       {s.canonicalName}
@@ -115,6 +154,10 @@ export default async function HomePage() {
         </div>
       </div>
 
+      {/* `condition && (...)` is a common JSX trick for "only show this if
+          the condition is true." If `recent.length > 0` is false, JavaScript
+          never evaluates the right-hand side, so nothing renders at all;
+          if it's true, the JSX on the right is what gets shown. */}
       {recent.length > 0 && (
         <div style={{ marginTop: "2rem" }}>
           <div className="section-header">
@@ -142,6 +185,8 @@ export default async function HomePage() {
                     <td data-label="Subject">{r.subject}</td>
                     <td data-label="Exam level">{seriesDisplayLabel(r.examSeriesCode)}</td>
                     <td>
+                      {/* Template literal again (see src/lib/format.ts) -- builds the
+                          paper's address by dropping its fields into the URL text. */}
                       <Link href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}>View</Link>
                     </td>
                   </tr>

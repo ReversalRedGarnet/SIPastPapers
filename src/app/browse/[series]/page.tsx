@@ -7,13 +7,27 @@ import { Badge } from "@/components/Badge";
 import { emptyYearsForSeries, listBrowseYears, seriesIsEmpty } from "@/lib/browse-years";
 import { seriesDisplayLabel } from "@/lib/format";
 
+// "Route parameters" (`params`, different from `searchParams` -- see
+// src/app/results/page.tsx) are the changeable segments of the address
+// itself, marked in the folder structure by square brackets. This file
+// lives at `app/browse/[series]/page.tsx`, so visiting `/browse/sisc-l1`
+// makes `params` equal `{ series: "sisc-l1" }` -- Next.js reads the actual
+// address and fills this in automatically.
 interface SeriesPageProps {
   params: Promise<{ series: string }>;
 }
 
+// `generateMetadata` is a Next.js convention function used instead of a
+// plain `metadata` export (see src/app/layout.tsx) whenever the page's
+// title/description depends on data that has to be looked up first --
+// here, the specific exam series being viewed.
 export async function generateMetadata({ params }: SeriesPageProps): Promise<Metadata> {
   const { series: seriesCode } = await params;
   const examSeries = await listExamSeries();
+  // `.find()` returns the first item in a list for which the given
+  // function returns true, or `undefined` if nothing matches -- unlike
+  // `.filter()` (see src/app/sitemap.ts), which returns *every* match as a
+  // new list.
   const series = examSeries.find((s) => s.code === seriesCode);
   if (!series) return { title: "Not found" };
 
@@ -32,6 +46,11 @@ export async function generateMetadata({ params }: SeriesPageProps): Promise<Met
 // the CLI -- infrequent, batch-driven.
 export const revalidate = 900;
 
+// `generateStaticParams` is a Next.js convention function that lists every
+// value of `params` (see the interface above) the site should build a page
+// for in advance, rather than waiting for a real visitor to ask for it --
+// here, one entry per exam series code.
+//
 // Required for `revalidate` to actually enable ISR on a dynamic segment --
 // without generateStaticParams, Next.js has no known param set to prerender
 // and the route stays fully dynamic regardless of `revalidate`. Cardinality
@@ -45,6 +64,10 @@ export default async function SeriesPage({ params }: SeriesPageProps) {
   const { series: seriesCode } = await params;
   const examSeries = await listExamSeries();
   const series = examSeries.find((s) => s.code === seriesCode);
+  // `notFound()` is a Next.js helper that immediately stops rendering this
+  // page and shows the site's 404 "not found" page instead (see
+  // src/app/not-found.tsx) -- used here when the address mentions an exam
+  // series that doesn't actually exist.
   if (!series) notFound();
 
   const years = listBrowseYears();

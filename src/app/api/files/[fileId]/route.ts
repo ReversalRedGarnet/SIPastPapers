@@ -14,12 +14,22 @@ import { generateDownloadFilename } from "@/lib/artifact-naming";
  * `?dl=1` forces a download (Content-Disposition: attachment); otherwise
  * the browser is free to render it inline (the default PDF "view").
  */
+// This is what the glossary calls an "API route": unlike a page.tsx file
+// (which returns JSX describing something to look at), a route.ts file
+// returns raw data or, as here, a file's actual bytes. Exporting a
+// function specifically named `GET` is a Next.js convention that makes it
+// handle GET requests -- the kind of request a browser sends when simply
+// visiting a link or an <img>/<a> tag points here; other names (`POST`,
+// `DELETE`, ...) would handle those other kinds of requests instead.
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ fileId: string }> }
 ) {
   const { fileId } = await params;
   const file = await getFileForDownload(fileId);
+  // `new NextResponse(...)` builds an HTTP response by hand -- a status
+  // code (404 here means "not found") and a body -- which is what actually
+  // gets sent back over the network to whatever asked for this address.
   if (!file) {
     return new NextResponse("Not found", { status: 404 });
   }

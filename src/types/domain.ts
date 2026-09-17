@@ -6,10 +6,20 @@
  * per-query Row interfaces, not a full one-type-per-table mirror.
  */
 
+// `type X = Y` gives an existing type a new, more meaningful name. This
+// doesn't change how the value works at all (a UUID is still just plain
+// text underneath) -- it just lets the rest of the code say "this needs to
+// be a UUID" instead of a plain, easy-to-misuse "string," making the
+// intent clearer to a reader.
 export type UUID = string;
 
 // --- exam_series ---------------------------------------------------------
 
+// An `interface` describes the exact shape a piece of data must have --
+// here, "anything called an ExamSeries always has an id, a code, a name,
+// and a description." Nothing is actually built or run by writing this;
+// it exists purely so TypeScript can check, everywhere this type is used,
+// that the right fields are present with the right kinds of values.
 export interface ExamSeries {
   id: UUID;
   code: string; // e.g. "sisc-l1"
@@ -34,6 +44,12 @@ export interface Subject {
  * language used elsewhere in the spec (Appendix A, sections 6.3, 8.3, 8.5)
  * and should be treated as provisional, not authoritative.
  */
+// This is a "union type" of exact text values: ArtifactType must be one of
+// these specific strings, word-for-word, and nothing else -- not "Question
+// Paper," not "questionpaper," only exactly "question_paper" and the other
+// options listed. Writing one option per line with a leading `|` is just a
+// formatting style; it means precisely the same thing as writing them all
+// on one line separated by `|`.
 export type ArtifactType =
   | "question_paper"
   | "marking_scheme"
@@ -111,6 +127,11 @@ export interface PublicExamRecord {
   status: ArtifactStatus;
   verification: VerificationStatus;
   rights: RightsStatus;
+  // A type shape can be nested directly inside another one, instead of
+  // being given its own separate name -- this says "the `file` field is
+  // either an object with these four fields, or `null` when there isn't
+  // a file yet," without needing a whole separate named interface just for
+  // that small shape.
   file: {
     id: UUID; // used to build the /api/files/[fileId] view/download link
     sha256: string;

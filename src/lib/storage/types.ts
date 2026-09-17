@@ -15,8 +15,18 @@ export interface PutResult {
   bytes: number;
 }
 
+// An interface (see src/types/domain.ts) can describe required *methods*
+// (actions something must be able to perform), not just plain data fields.
+// This says "anything claiming to be a StorageProvider must provide a
+// put/get/getStream/exists/delete/locate function with exactly these
+// inputs and outputs" -- without saying anything about *how* each one
+// actually works. local-fs.ts and r2.ts below are two very different
+// implementations of this same shared contract.
 export interface StorageProvider {
   /** Write bytes under `key`. Overwrites are the caller's responsibility to avoid — see section 5.3. */
+  // `contentType?: string` -- a `?` on a function parameter (as opposed to
+  // an object field, see src/app/results/page.tsx) means this argument is
+  // optional: callers can leave it out entirely.
   put(key: string, data: Buffer, contentType?: string): Promise<PutResult>;
 
   /** Read the full contents stored at `key`, or null if it doesn't exist. */

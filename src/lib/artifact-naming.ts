@@ -5,6 +5,11 @@ import type { ArtifactType } from "@/types/domain";
  * metadata — never from an uploaded file's original name (spec section 5.2).
  */
 
+// `Record<ArtifactType, string>` is a lookup-table type (see format.ts for
+// the basic idea) -- this one specifically requires a key for every single
+// possible ArtifactType value, so if a new artifact type is ever added to
+// that list elsewhere, TypeScript will refuse to compile this file until
+// someone adds a matching entry here too.
 const ARTIFACT_TYPE_LABEL: Record<ArtifactType, string> = {
   question_paper: "Question paper",
   marking_scheme: "Marking scheme",
@@ -23,10 +28,18 @@ const ARTIFACT_TYPE_SLUG: Record<ArtifactType, string> = {
   other: "other",
 };
 
+// `??` ("nullish coalescing") again -- see format.ts's seriesDisplayLabel
+// for the full explanation. Short version: use the left side unless it's
+// missing, then fall back to the right side.
 export function artifactTypeLabel(type: ArtifactType): string {
   return ARTIFACT_TYPE_LABEL[type] ?? type;
 }
 
+// `/_/g` is a "regular expression" (regex) -- a mini pattern-matching
+// language for text. This one matches every underscore character (the `g`
+// means "every match, not just the first"). `.replace(pattern, "-")` then
+// swaps every match for a hyphen, turning "question_paper" into
+// "question-paper".
 export function artifactTypeSlug(type: ArtifactType): string {
   return ARTIFACT_TYPE_SLUG[type] ?? type.replace(/_/g, "-");
 }
@@ -37,13 +50,33 @@ export function artifactTypeSlug(type: ArtifactType): string {
  * when one is set (subjects with more than one question paper for a year),
  * omitted otherwise. Other artifact types keep their plain type label.
  */
+// `string | null` is a "union type": this value is either real text, or
+// specifically the value `null`, meaning "there is deliberately no value
+// here." Writing it out like this forces every piece of code that uses
+// `paperNo` to handle the "there isn't one" case, instead of assuming
+// there's always a value and crashing when there isn't.
 export function artifactListLabel(type: ArtifactType, paperNo: string | null): string {
   if (type === "question_paper") {
+    // `condition ? valueIfTrue : valueIfFalse` is a "ternary" -- a compact
+    // one-line if/else. Here: if there's a paper number, use the first
+    // string; otherwise use the second.
     return paperNo ? `Examination Booklet ${paperNo}` : "Examination Booklet";
   }
   return artifactTypeLabel(type);
 }
 
+// `(type, slug) => [slug, type as ArtifactType]` is an "arrow function" --
+// a shorter way to write a small, throwaway function, commonly passed
+// into methods like `.map()` below. `Object.entries(obj)` turns a lookup
+// object into a list of [key, value] pairs; `.map()` then transforms each
+// pair (here, swapping the key and value around); `Object.fromEntries(...)`
+// turns the transformed list back into a lookup object. The `[type, slug]`
+// part is "array destructuring" -- pulling the two items out of each pair
+// into their own named variables in one step, rather than writing
+// `pair[0]` and `pair[1]`. `as ArtifactType` is a "type assertion": it
+// tells TypeScript "trust me, this string really is one of the known
+// ArtifactType values," since TypeScript can't work that out on its own
+// here.
 const SLUG_TO_ARTIFACT_TYPE: Record<string, ArtifactType> = Object.fromEntries(
   Object.entries(ARTIFACT_TYPE_SLUG).map(([type, slug]) => [slug, type as ArtifactType])
 );
@@ -101,6 +134,10 @@ export function generateArtifactTitle(params: {
   artifactType: ArtifactType;
   paperNo: string | null;
 }): string {
+  // "Destructuring": instead of writing `params.examSeriesName`,
+  // `params.subjectName`, etc. separately, this one line pulls all five
+  // named fields out of `params` and creates a separate variable for each,
+  // matched up by name.
   const { examSeriesName, subjectName, year, artifactType, paperNo } = params;
   let suffix: string;
   if (artifactType === "practical_paper" && paperNo && PRACTICAL_PAPER_SUFFIXES[paperNo]) {
@@ -141,6 +178,10 @@ export function generateCanonicalFileName(params: {
  * filename -- a single artifact download, or the outer name of a
  * multi-artifact zip.
  */
+// This chains four method calls one after another (each one's result
+// feeds into the next), which is a common pattern for "take this text and
+// apply several cleanup steps in a row" -- easier to read top-to-bottom
+// than nesting them inside one another.
 export function sanitizeForFilename(text: string): string {
   return text
     .replace(/—/g, "-")

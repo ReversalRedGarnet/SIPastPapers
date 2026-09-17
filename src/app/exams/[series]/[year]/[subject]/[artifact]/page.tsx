@@ -92,6 +92,10 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
     : null;
 
   const subjectArtifacts = await listSubjectArtifacts(record.examSeriesCode, record.subjectSlug);
+  // `.findIndex()` is like `.find()` (see src/app/browse/[series]/page.tsx)
+  // but hands back the matching item's position in the list (a number,
+  // starting at 0) instead of the item itself -- useful here to look at the
+  // items right before/after it.
   const currentIndex = subjectArtifacts.findIndex((r) => r.id === record.id);
   const prevPaper = currentIndex > 0 ? subjectArtifacts[currentIndex - 1] : undefined;
   const nextPaper =
@@ -99,14 +103,34 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
       ? subjectArtifacts[currentIndex + 1]
       : undefined;
 
+  // Reading inside-out: `.filter()` keeps only other years' papers,
+  // `.map()` reduces each one down to just its year number, `new Set(...)`
+  // (see src/lib/browse-years.ts) throws away any repeated years, and
+  // `Array.from(...)` turns that Set back into a plain array so `.sort()`
+  // can be used on it (Sets don't have a `.sort()` of their own). `.sort()`
+  // takes a function that compares two items (`a` and `b`) at a time and
+  // returns a negative number if `a` should come first, positive if `b`
+  // should; `b - a` sorts numbers newest-first (largest number first).
   const otherYears = Array.from(
     new Set(subjectArtifacts.filter((r) => r.year !== record.year).map((r) => r.year))
   ).sort((a, b) => b - a);
+  // `(typeof subjectArtifacts)[number]` asks TypeScript "what's the type of
+  // one single item inside the subjectArtifacts array?" -- handy for typing
+  // a helper function that operates on one of those items, without needing
+  // to give that item shape its own separate name.
   const paperHref = (r: (typeof subjectArtifacts)[number]) =>
     `/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`;
 
   return (
     <>
+      {/* `dangerouslySetInnerHTML` is React's deliberately scary-sounding name
+          for inserting raw HTML text directly into the page, bypassing
+          React's normal, safer way of building elements. It's named that way
+          as a warning: doing this with untrusted/visitor-supplied text is
+          exactly how a website can become vulnerable to attacks. It's safe
+          here specifically because `jsonLd` is data this same function just
+          built moments ago from trusted database content, not something a
+          visitor typed in. */}
       {jsonLd && (
         <script
           type="application/ld+json"
@@ -114,6 +138,11 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
         />
       )}
 
+      {/* JSX normally collapses/trims extra whitespace between elements when
+          they're on separate lines. Writing `{" "}` -- a literal space
+          wrapped in curly braces so it's treated as an explicit value, not
+          formatting -- forces a real space to appear there, so text doesn't
+          run together at the line break below. */}
       <nav aria-label="Breadcrumb" className="breadcrumb">
         <Link href="/browse">Browse</Link> ›{" "}
         <Link href={`/browse/${record.examSeriesCode}`}>{seriesLabel}</Link> ›{" "}
@@ -263,6 +292,9 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
             <p>Thanks — this has been logged and will be reviewed.</p>
           </div>
         )}
+        {/* `decodeURIComponent` reverses `encodeURIComponent` (see
+            ./actions.ts), turning the escaped text back from the URL's
+            query string into ordinary readable text. */}
         {reportError && (
           <div className="confirmation" role="alert">
             <p>{decodeURIComponent(reportError)}</p>
@@ -300,6 +332,10 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
           </div>
 
           <div className="form-actions">
+            {/* Handing a Server Action (see ./actions.ts) straight to a button's
+                `formAction` is what wires this plain HTML form up to run
+                server-side code on submit -- no separate click handler or
+                fetch() call needed. */}
             <button type="submit" formAction={reportIssueAction}>
               Submit report
             </button>

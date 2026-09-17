@@ -73,6 +73,12 @@ export async function GET(
   // DB/storage drift, not a normal "no papers yet" state) would produce a
   // 200 response with a valid but zero-entry zip and no visible error.
   const existence = await Promise.all(files.map((file) => storage.exists(file.storageKey)));
+  // `.filter()`'s callback can optionally take a second parameter -- the
+  // item's position in the list -- alongside the item itself. This filter
+  // doesn't need the item, only its position (to check the matching
+  // true/false in `existence`), so the item parameter is named `_` by
+  // convention, a common way to signal "this parameter is required to be
+  // here, but intentionally unused."
   const availableFiles = files.filter((_, i) => existence[i]);
   if (availableFiles.length === 0) {
     console.error(
@@ -92,13 +98,31 @@ export async function GET(
   // propagates as an error on the response stream, which ends the
   // connection instead of completing it, so the client sees a failed
   // download rather than a corrupt file that looks complete.
+  // Every other Promise in this project comes from calling an already-`
+  // async` function and using `await` on the result. This is the other,
+  // rarer way to get one: `new Promise((resolve, reject) => {...})` builds
+  // a brand-new Promise from scratch, out of something that isn't already
+  // promise-based (here, an event -- `archive.once("error", ...)`).
+  // Whoever eventually calls `reject(someError)` is what makes *this*
+  // Promise fail, which is what lets it be awaited/raced against below.
   const archiveError = new Promise<never>((_, reject) => {
     archive.once("error", reject);
   });
 
+  // `(async () => { ... })()` defines a function and calls it immediately,
+  // all in one expression -- sometimes called an "IIFE" (Immediately
+  // Invoked Function Expression). It's used here because this code needs
+  // to keep running in the background (appending files) while the actual
+  // GET function below returns its streaming response right away, without
+  // waiting for the zip to finish first.
   (async () => {
     try {
       const limit = pLimit(READ_CONCURRENCY);
+      // `Promise.race([...])` -- unlike `Promise.all` (see
+      // src/app/page.tsx), which waits for every promise to finish --
+      // continues as soon as the *first* one settles, whichever that is.
+      // Here: either every file finishes appending, or the archive reports
+      // an error, whichever happens first.
       await Promise.race([
         Promise.all(availableFiles.map((file) => limit(() => appendFile(storage, archive, file)))),
         archiveError,

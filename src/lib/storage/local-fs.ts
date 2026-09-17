@@ -9,10 +9,28 @@ import type { PutResult, StorageProvider } from "./types";
  * backend (STORAGE_BACKEND=local, or unset) — see r2.ts for the
  * Cloudflare R2 alternative.
  */
+// A `class` is a template for creating objects that bundle related data
+// together with the functions that act on it. `implements StorageProvider`
+// is a promise to the type checker: "this class provides every method
+// StorageProvider requires" (see types.ts) -- if one were missing,
+// TypeScript would refuse to compile.
 export class LocalFilesystemStorage implements StorageProvider {
+  // A field declared on a class exists on every object created from it.
+  // `private` means only code inside this class can access `rootDir`
+  // directly; `readonly` means it can be set once (in the constructor
+  // below) and never reassigned afterward.
   private readonly rootDir: string;
 
+  // The `constructor` is a special method that runs once, automatically,
+  // whenever someone writes `new LocalFilesystemStorage(...)` to create a
+  // new instance. Its `rootDir: string = path.join(...)` parameter has a
+  // default value (see src/lib/db/client.ts), so callers can leave it out
+  // and get the ordinary local-storage folder.
   constructor(rootDir: string = path.join(process.cwd(), "local-storage")) {
+    // `this` refers to "the specific object being constructed right now" --
+    // this line saves the given rootDir onto that object's own `rootDir`
+    // field, so every other method below (which also uses `this.rootDir`)
+    // can read it back later.
     this.rootDir = rootDir;
   }
 
@@ -57,6 +75,10 @@ export class LocalFilesystemStorage implements StorageProvider {
     return createReadStream(resolved);
   }
 
+  // `catch` doesn't have to capture the error into a variable if the code
+  // doesn't need to look at it -- here, any failure at all just means
+  // "doesn't exist," so there's nothing about the specific error worth
+  // reading.
   async exists(key: string): Promise<boolean> {
     try {
       await fs.access(this.resolve(key));

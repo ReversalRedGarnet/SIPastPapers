@@ -20,6 +20,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Only records with an actual file are worth sending a crawler to --
   // 'not_yet_recovered' placeholders have no document, so a page for one is
   // thin/empty content rather than something worth indexing.
+  // `.filter()` builds a new, shorter list containing only the items for
+  // which the given function returns true -- here, only records that have
+  // both a file and a subject slug are kept.
   const withFiles = records.filter((r) => r.file && r.subjectSlug);
 
   const entries: MetadataRoute.Sitemap = [
