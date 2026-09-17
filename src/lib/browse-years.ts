@@ -1,15 +1,16 @@
 import type { ExamContentAvailability } from "@/lib/db/queries";
 
 /**
- * The browse drill-down shows every exam level across this full range as a
- * placeholder, regardless of which years currently have ingested content --
- * papers are gathered incrementally, and the year should still be there to
- * navigate to (and show as empty) before anything's been added for it.
+ * When someone browses the archive, we always show every year in this
+ * whole range as an option, whether or not we've actually added any
+ * papers for it yet. That's because papers get added gradually over time
+ * — a year should still be there to click into (even if it shows as
+ * empty) before anything has been added for it.
  */
 export const BROWSE_YEAR_FROM = 2015;
 export const BROWSE_YEAR_TO = 2025;
 
-/** Fixed placeholder year range for the browse drill-down, newest first. */
+/** The fixed list of years shown when browsing, newest year first. */
 // `number[]` means "an array (a list) of numbers" -- the square brackets
 // after a type mean "a list of this type." The `for` loop below counts
 // downward from the newest year to the oldest, adding each one to the list
@@ -20,7 +21,7 @@ export function listBrowseYears(): number[] {
   return years;
 }
 
-/** True when an exam series has zero public content across every year. */
+/** True when an exam series has no publicly visible papers at all, for any year. */
 export function seriesIsEmpty(seriesCode: string, availability: ExamContentAvailability): boolean {
   // `.has(...)` asks a Set (a collection that only ever stores each value
   // once, with no particular order) whether it contains something. The `!`
@@ -30,10 +31,12 @@ export function seriesIsEmpty(seriesCode: string, availability: ExamContentAvail
 }
 
 /**
- * Years (within the given set) that have zero public content for one
- * series. Only meaningful to show per-row when the series itself isn't
- * already fully empty -- see seriesIsEmpty -- so the "no content" signal
- * rolls up to the series level instead of repeating on every year row.
+ * Out of the given years, returns the ones that have no publicly visible
+ * papers for this particular exam series. This is only worth showing on a
+ * per-year basis when the whole series isn't already empty (see
+ * seriesIsEmpty above) — that way, the "nothing here yet" message shows up
+ * once for the whole series, instead of being repeated on every single
+ * year.
  */
 export function emptyYearsForSeries(
   seriesCode: string,

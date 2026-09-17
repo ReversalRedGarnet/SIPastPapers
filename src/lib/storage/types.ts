@@ -1,13 +1,16 @@
 import type { Readable } from "node:stream";
 
 /**
- * Storage abstraction per PROJECT_SPEC.md section 5.1.
+ * This describes the shared interface that any storage system (a place to
+ * save and retrieve uploaded files) must follow.
  *
- * The rest of the app should depend only on this interface, never on a
- * concrete provider. Two implementations exist — local-fs.ts
- * (filesystem, the default, no cloud dependency) and r2.ts (Cloudflare
- * R2) — selected by getStorageProvider() in ./index.ts based on
- * STORAGE_BACKEND, without any caller needing to know which is active.
+ * The rest of the app only ever talks to this interface, never to a
+ * specific storage system directly. There are two actual implementations:
+ * local-fs.ts (saves files on the local disk — the default, no cloud
+ * account needed) and r2.ts (saves files to Cloudflare's cloud storage).
+ * getStorageProvider() in ./index.ts picks which one to use based on a
+ * setting, so the rest of the app doesn't need to know or care which one
+ * is actually being used.
  */
 
 export interface PutResult {
@@ -23,41 +26,43 @@ export interface PutResult {
 // actually works. local-fs.ts and r2.ts below are two very different
 // implementations of this same shared contract.
 export interface StorageProvider {
-  /** Write bytes under `key`. Overwrites are the caller's responsibility to avoid — see section 5.3. */
+  /** Saves the given bytes under `key`. It's up to whoever calls this to avoid accidentally overwriting an existing file. */
   // `contentType?: string` -- a `?` on a function parameter (as opposed to
   // an object field, see src/app/results/page.tsx) means this argument is
   // optional: callers can leave it out entirely.
   put(key: string, data: Buffer, contentType?: string): Promise<PutResult>;
 
-  /** Read the full contents stored at `key`, or null if it doesn't exist. */
+  /** Reads the full contents saved at `key`, or returns null if nothing is there. */
   get(key: string): Promise<Buffer | null>;
 
   /**
-   * Read the contents stored at `key` as a stream, or null if it doesn't
-   * exist — for a caller that wants to pipe bytes onward (e.g. into a zip
-   * entry) without holding the whole file in memory. `get()` remains the
-   * right choice for a caller that genuinely needs the full Buffer (sha256
-   * hashing at ingest time, etc.); this doesn't replace it.
+   * Same as get(), but delivers the contents as a stream instead of one
+   * big chunk. Useful when something wants to pass the file's bytes along
+   * (say, into a zip download) without having to hold the entire file in
+   * memory at once. Use get() instead when you genuinely need the whole
+   * file as one Buffer (like when calculating a file's fingerprint/hash).
    */
   getStream(key: string): Promise<Readable | null>;
 
-  /** Whether an object exists at `key`. */
+  /** Checks whether something is saved at `key`. */
   exists(key: string): Promise<boolean>;
 
-  /** Remove the object at `key`. Should only be used for explicit, logged corrections — never routine overwrite. */
+  /** Deletes whatever is saved at `key`. Should only be used for a deliberate, tracked correction — never as a routine way to overwrite a file. */
   delete(key: string): Promise<void>;
 
-  /** A locator for the object suitable for building a download/view link. Not guaranteed to be a public URL for every provider. */
+  /** Returns something that can be used to build a download/view link for this file. Not guaranteed to be a public web address for every storage system. */
   locate(key: string): string;
 }
 
 /**
- * Canonical storage key layout per section 5.2:
+ * Builds the standard file path used to save an exam paper, always in
+ * this shape:
  *   archive/{exam-series}/{year}/{subject-slug}/{artifact-type}/{canonical-file}.pdf
  *
- * File names must be derived from canonical metadata, not from the
- * uploaded file's original name (section 5.2). The original filename is
- * kept separately as provenance metadata, not used here.
+ * The file name is always generated from the paper's own details (exam
+ * series, year, subject, etc.) — never taken from whatever the uploaded
+ * file happened to be named. The original uploaded file name is kept
+ * separately, just as a record of where it came from; it isn't used here.
  */
 export function buildStorageKey(params: {
   examSeriesSlug: string;

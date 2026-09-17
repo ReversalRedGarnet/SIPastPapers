@@ -24,9 +24,10 @@ const ITEMS = [
 ];
 
 /**
- * Only the active-link highlighting needs client JS (usePathname) — the
- * links themselves would work perfectly well as plain server-rendered
- * anchors without it.
+ * The only reason this needs client-side JavaScript at all is to
+ * highlight which nav link is currently active (it needs to check the
+ * current page's web address). The links themselves would work fine as
+ * plain, server-rendered links without any JavaScript.
  */
 export function SiteNav() {
   const pathname = usePathname();

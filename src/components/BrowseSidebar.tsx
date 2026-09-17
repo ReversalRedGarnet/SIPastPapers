@@ -6,9 +6,10 @@ import { seriesDisplayLabel } from "@/lib/format";
 import type { ExamSeries } from "@/types/domain";
 
 /**
- * The persistent "Explorer-style" left-hand navigation for the browse
- * drill-down (exam level → year). Plain server-rendered links — no
- * client JS needed, works without JavaScript.
+ * The left-hand navigation menu for browsing (exam level → year), similar
+ * to a file-explorer sidebar. It's rendered entirely on the server as
+ * plain links, with no client-side JavaScript needed, so it works even
+ * for visitors with JavaScript turned off.
  */
 export function BrowseSidebar({
   examSeries,

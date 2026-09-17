@@ -11,16 +11,17 @@
 import type { SelectHTMLAttributes } from "react";
 
 /**
- * A <select> that submits its enclosing form the moment its value changes,
- * so picking a new filter on /results re-runs the search immediately
- * instead of waiting for "Search" to be clicked. Only used for the filter
- * dropdowns -- the text query box stays a plain input, still requiring
- * Search/Enter, per the existing search UX.
+ * A dropdown menu that submits its surrounding search form the moment
+ * someone picks a new option — so changing a filter on the results page
+ * re-runs the search right away, instead of making you click "Search"
+ * separately. This is only used for the filter dropdowns; the text search
+ * box stays a normal input that still needs Search/Enter to be pressed,
+ * matching how search already works.
  *
- * requestSubmit() (not form.submit()) so the form's own method/action
- * still drives navigation -- a real GET, matching what clicking "Search"
- * already does, and works with `search-form--inline`'s existing markup
- * with no other page changes needed.
+ * We use requestSubmit() rather than a plain form.submit() call, so the
+ * form still submits the normal way (as a real page navigation) —
+ * exactly like clicking the "Search" button already does, and it works
+ * with the existing page without needing any other changes.
  */
 export function AutoSubmitSelect(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return (

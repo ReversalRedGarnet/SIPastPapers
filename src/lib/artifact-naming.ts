@@ -1,8 +1,10 @@
 import type { ArtifactType } from "@/types/domain";
 
 /**
- * Pure helpers for deriving canonical, deterministic names from artifact
- * metadata — never from an uploaded file's original name (spec section 5.2).
+ * Plain helper functions for generating consistent names — for titles,
+ * file names, and URL paths — always built from an exam paper's own
+ * details (exam series, subject, year, etc.), never from whatever name
+ * the original uploaded file happened to have.
  */
 
 // `Record<ArtifactType, string>` is a lookup-table type (see format.ts for
@@ -45,10 +47,11 @@ export function artifactTypeSlug(type: ArtifactType): string {
 }
 
 /**
- * Public-facing label for one artifact in a list row / breadcrumb: question
- * papers are shown as "Examination Booklet", with the paper number appended
- * when one is set (subjects with more than one question paper for a year),
- * omitted otherwise. Other artifact types keep their plain type label.
+ * The label shown for one exam paper in a list or breadcrumb. Question
+ * papers are shown as "Examination Booklet", with the paper number added
+ * on the end if there's more than one for that subject and year (e.g.
+ * "Examination Booklet 2"). Every other type of paper just uses its own
+ * plain type label (e.g. "Marking scheme").
  */
 // `string | null` is a "union type": this value is either real text, or
 // specifically the value `null`, meaning "there is deliberately no value
@@ -81,7 +84,7 @@ const SLUG_TO_ARTIFACT_TYPE: Record<string, ArtifactType> = Object.fromEntries(
   Object.entries(ARTIFACT_TYPE_SLUG).map(([type, slug]) => [slug, type as ArtifactType])
 );
 
-/** Inverse of {@link artifactTypeSlug} — used to parse batch-ingest filenames. */
+/** The reverse of {@link artifactTypeSlug} — turns a slug back into its artifact type. Used when reading batch-ingest file names. */
 export function artifactTypeFromSlug(slug: string): ArtifactType | undefined {
   return SLUG_TO_ARTIFACT_TYPE[slug.toLowerCase()];
 }
@@ -95,11 +98,11 @@ function slugify(value: string): string {
 }
 
 /**
- * Known practical_paper paper_no values (see reorganize-papers.cjs's
- * Industrial Arts CAT/drawing-sheet handling) get a clean, specific title
- * suffix instead of the generic "Paper <paperNo> <type label>" pattern --
- * "Paper cat Practical/CAT paper" reads as a double-labeled duplicate of
- * the type itself, not a useful distinguishing suffix.
+ * Certain known paper-number values for practical papers (Industrial
+ * Arts' CAT and drawing-sheet papers) get a clean, specific title ending
+ * instead of the usual generic "Paper <number> <type label>" pattern —
+ * otherwise it would read as an odd, repetitive double-labeling like
+ * "Paper cat Practical/CAT paper".
  */
 const PRACTICAL_PAPER_SUFFIXES: Record<string, string> = {
   cat: "CAT Paper",
@@ -107,16 +110,17 @@ const PRACTICAL_PAPER_SUFFIXES: Record<string, string> = {
 };
 
 /**
- * Design Technology's two parallel, mutually exclusive full papers (see
- * reorganize-papers.cjs's wood/food stream detection) get a clean,
- * stream-specific suffix instead of the generic "Paper <paperNo>" pattern.
- * Keyed on artifactType + paperNo, not on subjectName, so it can't
- * accidentally affect Industrial Arts' cat/drawingsheet labels above --
- * those are always practical_paper, this is always question_paper, so the
- * two lookups never collide even though both are matched on bare paperNo
- * strings. Same reasoning as this file's series-scoping precedent: don't
- * let a paperNo string carry meaning outside the (type, value) pair it was
- * actually assigned under.
+ * Design Technology has two separate full papers that a student takes one
+ * or the other of (a "wood/metal" stream and a "food/clothing" stream).
+ * These get their own clean, descriptive title ending instead of the
+ * generic "Paper <number>" pattern.
+ *
+ * This lookup is keyed on the combination of artifact type + paper number
+ * together, not just the subject name, so it can never accidentally clash
+ * with the Industrial Arts suffixes above — those only ever apply to
+ * practical papers, while this only ever applies to question papers, so
+ * the same paper-number text used in each case can never be confused with
+ * the other.
  */
 const QUESTION_PAPER_STREAM_SUFFIXES: Record<string, string> = {
   woodmetal: "Design Technology (Wood/Metal)",
@@ -124,8 +128,8 @@ const QUESTION_PAPER_STREAM_SUFFIXES: Record<string, string> = {
 };
 
 /**
- * Title generated consistently from canonical metadata (spec section 6.3):
- * "<Exam series> <Subject> <Year> — <Paper N|Artifact type label>"
+ * Builds a paper's display title consistently, always in this format:
+ * "<Exam series> <Subject> <Year> — <Paper number, or the type label>"
  */
 export function generateArtifactTitle(params: {
   examSeriesName: string;
@@ -155,7 +159,7 @@ export function generateArtifactTitle(params: {
 }
 
 /**
- * Deterministic file name per spec section 13.4:
+ * Builds a predictable, always-the-same file name, in this format:
  * <exam-series>_<year>_<subject>_<artifact-type>_<paper-no>.pdf
  */
 export function generateCanonicalFileName(params: {
@@ -171,12 +175,12 @@ export function generateCanonicalFileName(params: {
 }
 
 /**
- * Strips/replaces characters that are invalid in filenames on
- * Windows/macOS/Linux, and swaps an em dash for a plain hyphen since it
- * renders inconsistently across file pickers and older filesystems. Shared
- * by every place a human-readable name (not a slug) needs to become a safe
- * filename -- a single artifact download, or the outer name of a
- * multi-artifact zip.
+ * Removes or replaces characters that aren't allowed in file names on
+ * Windows, macOS, or Linux, and swaps an em dash (—) for a plain hyphen,
+ * since the em dash doesn't display consistently everywhere. Used
+ * anywhere a human-readable name (as opposed to a URL slug) needs to
+ * become a safe file name — whether for a single downloaded paper, or for
+ * the name of a zip file containing several papers.
  */
 // This chains four method calls one after another (each one's result
 // feeds into the next), which is a common pattern for "take this text and
@@ -191,22 +195,23 @@ export function sanitizeForFilename(text: string): string {
 }
 
 /**
- * Human-readable download filename derived from an artifact's title (the
- * same string {@link generateArtifactTitle} produces and stores on the
- * artifact at ingest time) -- unlike {@link generateCanonicalFileName}'s
- * slug, this is what a person actually sees land in their Downloads
- * folder, so it keeps the readable title text.
+ * Builds the file name a person actually sees when they download a paper
+ * — built from the paper's readable title (the same title
+ * {@link generateArtifactTitle} produces). Unlike
+ * {@link generateCanonicalFileName}'s internal storage name, this one
+ * keeps the human-readable text, since it's what lands in someone's
+ * Downloads folder.
  */
 export function generateDownloadFilename(title: string): string {
   return `${sanitizeForFilename(title)}.pdf`;
 }
 
 /**
- * URL-facing slug for an artifact within its (series, year, subject) scope,
- * matching the pattern in spec section 12.1: "paper-1", "paper-1-marking-scheme".
- * There is no `slug` column in the schema (section 4.2) — it is always
- * computed from `type` + `paper_no` so it never drifts from the canonical
- * metadata.
+ * Builds the part of the web address that identifies one exam paper
+ * within its series/year/subject (e.g. "paper-1", "paper-1-marking-scheme").
+ * There's no separate "slug" column stored in the database — it's always
+ * calculated fresh from the paper's type and paper number, so it can never
+ * fall out of sync with the paper's actual details.
  */
 export function artifactSlug(params: {
   artifactType: ArtifactType;

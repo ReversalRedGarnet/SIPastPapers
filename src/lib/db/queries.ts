@@ -21,15 +21,10 @@ import type {
   VerificationStatus,
 } from "@/types/domain";
 
-// --- row shapes as they come back from postgres (snake_case) ---------------
-//
-// Postgres column names are conventionally written like `subject_code`
-// (called "snake_case"), while the rest of this project's JavaScript/
-// TypeScript code uses `subjectCode` ("camelCase") by convention instead.
-// The `*Row` interfaces below describe data exactly as the database hands
-// it back (snake_case field names); the "mapping helpers" further down
-// convert each one into the camelCase shapes (from src/types/domain.ts)
-// that the rest of the app actually works with.
+// --- Below: shapes of the raw rows the database gives back. Postgres
+// column names use underscores (snake_case), so these mirror that, and the
+// "to..." functions further down convert them into the camelCase shapes
+// the rest of the app uses. -------------------------------------------------
 
 interface ExamSeriesRow {
   id: string;
@@ -41,8 +36,9 @@ interface ExamSeriesRow {
 interface SubjectRow {
   id: string;
   canonical_name: string;
-  // jsonb column — the pg driver parses this into a real array already,
-  // unlike the sqlite version's TEXT column which needed JSON.parse().
+  // This column is stored as JSON in the database, but the database
+  // library already turns it into a normal JavaScript array for us, so we
+  // don't need to parse it ourselves.
   aliases: string[];
   subject_code: string | null;
 }
@@ -68,13 +64,13 @@ interface RightsRow {
 }
 
 /**
- * One row of PUBLIC_ARTIFACT_SELECT below — the artifact base fields plus
- * its most-recent file/source/verification/rights, all fetched in the same
- * query via LATERAL joins instead of hydratePublicRecord issuing four
- * follow-up queries per row (an N+1 that made list pages like /results and
- * the homepage's "Recently added" cost four extra round trips per record
- * instead of zero). Left-joined, so the file/source/verification/rights
- * columns are null when an artifact has none yet.
+ * One row of everything the PUBLIC_ARTIFACT_SELECT query below fetches:
+ * the basic exam-paper details, plus its most recent file, source,
+ * verification and rights info, all in one go. We fetch all of this
+ * together, in a single query, so that showing a list of many papers
+ * doesn't require a separate extra database trip for each one. Since an
+ * exam paper might not have a file/source/verification/rights entry yet,
+ * those fields can come back empty (null).
  */
 // `extends` on an interface means "this includes everything ArtifactBaseRow
 // already has, plus these extra fields" -- rather than retyping every field
@@ -91,7 +87,8 @@ interface PublicArtifactRow extends ArtifactBaseRow {
   rights_status: RightsStatus | null;
 }
 
-// --- mapping helpers ---------------------------------------------------------
+// --- Helpers that convert a raw database row into the shape the rest of
+// the app expects to work with. ----------------------------------------------
 
 function toExamSeries(row: ExamSeriesRow): ExamSeries {
   return { id: row.id, code: row.code, name: row.name, description: row.description };
@@ -132,13 +129,12 @@ const ARTIFACT_BASE_SELECT = `
 `;
 
 /**
- * Same base join as ARTIFACT_BASE_SELECT, plus each artifact's most-recent
- * file/source/verification/rights via LEFT JOIN LATERAL — one round trip
- * for however many rows match, instead of the base query plus four more
- * per row. Used by the public read paths (searchPublicArtifacts,
- * listRecentPublicArtifacts, getPublicArtifactBySlug); the CLI's
- * list/bulk functions still use the plain ARTIFACT_BASE_SELECT above via
- * hydrateArtifactSummary, unchanged.
+ * Like ARTIFACT_BASE_SELECT above, but it also grabs each exam paper's
+ * most recent file, source, verification, and rights info in the same
+ * query, instead of running four extra queries per paper. This is what
+ * powers the public-facing pages (search results, "recently added", and
+ * an individual paper's page). The command-line tool's own list/bulk
+ * features still use the simpler ARTIFACT_BASE_SELECT above.
  */
 const PUBLIC_ARTIFACT_SELECT = `
   select
@@ -237,28 +233,28 @@ function hydratePublicRecord(row: PublicArtifactRow): PublicExamRecord {
   };
 }
 
-// --- reference data reads (used by public pages + the CLI) -----------------
+// --- Basic reference data lookups (exam series, subjects, years). Used by
+// both the public website and the command-line tool. -----------------------
 
-// Wrapped in React's cache() (request-scoped memoization, not Next's
-// unstable_cache): several pages call the same read from both
-// generateMetadata and the page body in one request (e.g. listExamSeries
-// via browse/[series]'s and the browse-tree loadContext() helpers) --
-// cache() collapses those back down to one DB round trip per request.
-// Only applied to read-only functions actually called from page render
-// paths (see the per-function notes below) -- CLI-only reads
-// (getCoverageMatrix, listAllArtifacts, listArtifactsBySeriesYearRange,
-// checkRightsGate) and every mutation are deliberately left unwrapped:
-// scripts/cli.ts runs as one long-lived process across a whole batch
-// operation, where memoizing a read could serve stale data across calls
-// that are supposed to see the effect of an earlier write in the same run.
+// The functions below are wrapped in React's `cache()`. This just means:
+// if the same page needs the same piece of data twice while it's loading
+// (which happens more often than you'd think), we only actually ask the
+// database once, and reuse the answer the second time.
+//
+// We only do this for the read-only functions that pages actually render
+// with. The command-line tool's functions are deliberately NOT wrapped
+// this way, because the CLI can run several steps back-to-back in one go,
+// and we don't want an earlier cached answer to hide the results of a
+// change the CLI just made moments ago.
+//
 // `cache(async () => {...})` is a "higher-order function": cache() itself
 // is a function whose job is to take another function and hand back a new,
 // wrapped version of it with extra behavior added (here, remembering the
-// result -- see the comment above). The `async () => { ... }` part is the
-// actual function being wrapped -- an arrow function (see
-// artifact-naming.ts) that takes no inputs. Also, `rows.map(toExamSeries)`
-// is the same `.map()` from earlier, just handed an existing named
-// function to run on each item instead of writing a new inline one.
+// result). The `async () => { ... }` part is the actual function being
+// wrapped -- an arrow function (see artifact-naming.ts) that takes no
+// inputs. Also, `rows.map(toExamSeries)` is the same `.map()` from
+// earlier, just handed an existing named function to run on each item
+// instead of writing a new inline one.
 export const listExamSeries = cache(async (): Promise<ExamSeries[]> => {
   const rows = await query<ExamSeriesRow>("select * from exam_series order by name");
   return rows.map(toExamSeries);
@@ -279,21 +275,20 @@ export const listYears = cache(async (): Promise<number[]> => {
 const PUBLIC_STATUSES = "('published', 'not_yet_recovered')";
 
 export interface ExamContentAvailability {
-  /** exam series codes with at least one publicly-visible artifact in any year */
+  /** Which exam series (e.g. "SIF3") have at least one paper visible to the public, in any year */
   seriesWithContent: Set<string>;
-  /** "seriesCode:year" pairs with at least one publicly-visible artifact */
+  /** Which specific "series:year" combinations (e.g. "SIF3:2019") have at least one visible paper */
   yearsWithContent: Set<string>;
 }
 
 /**
- * One aggregate query answering "does this series / this series+year have
- * any public content at all", for every series and year at once. The browse
- * drill-down (src/lib/browse-years.ts) shows a fixed placeholder year range
- * per series regardless of what's actually been ingested, so the sidebar
- * and year-list pages need this availability data to show a "no content
- * yet" indicator -- computed once per page render and reused for both,
- * rather than a per-row existence check (which at 3 series x 11 years would
- * reintroduce the N+1 pattern the earlier hydratePublicRecord fix removed).
+ * Answers "does this exam series, or this series+year, have any content at
+ * all?" for every series and year in one single query. The browse pages
+ * always show a fixed list of years per series (whether or not we've
+ * actually got papers for them), so they need this to know which years to
+ * mark as "nothing here yet". We compute it once and reuse it for both the
+ * sidebar and the year list, rather than asking the database separately
+ * for each individual year — which would get slow as more years are added.
  */
 export const getExamContentAvailability = cache(async (): Promise<ExamContentAvailability> => {
   const rows = await query<{ series_code: string; year: number }>(
@@ -320,16 +315,15 @@ export interface PublicArtifactFilters {
 }
 
 /**
- * Shared WHERE-clause builder for both the unpaginated and paginated public
- * search below, so the two can never drift on what a given filter means.
- * `q` used to be applied by fetching every matching row and filtering in
- * JavaScript afterwards -- fine at a few hundred rows, but it meant a bare
- * keyword search with no other filters pulled the entire public-artifacts
- * table (all four LATERAL joins included) into memory on every call. It's
- * now a plain ILIKE across the columns a user would actually search by;
- * good enough for the archive's current size, with real full-text search
- * (a tsvector column + GIN index, for ranking and multi-word queries) left
- * as a future improvement, not required here.
+ * Builds the shared filtering logic (search box, series, year, subject)
+ * used by both the plain search below and its paginated version, so the
+ * two versions can never disagree about what a filter means.
+ *
+ * The keyword search (`q`) is done as a simple "contains this text"
+ * database search. That's good enough for how much data this archive
+ * currently has. A more advanced full-text search (which would rank
+ * results by relevance and handle multi-word queries better) could be
+ * added later, but isn't needed yet.
  */
 function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
   clauses: string[];
@@ -353,13 +347,11 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
     params.push(filters.series);
     clauses.push(`es.code = $${params.length}`);
   }
-  // filters.year comes straight from a searchParams string (see /results) --
-  // unlike series/subject codes, it's coerced to a number before binding, so
-  // a non-numeric value (e.g. "abc") must be rejected here rather than sent
-  // to Postgres as NaN, which fails with "invalid input syntax for type
-  // integer" on the int column. A bad year is treated as no year filter at
-  // all, same as an absent one -- not a 404/redirect, since this is a
-  // multi-filter search page, not a single-resource lookup.
+  // The year filter comes in as plain text from the page's URL, so we need
+  // to convert it to a number ourselves. If someone typed something that
+  // isn't a valid number (e.g. "abc"), we just ignore the year filter
+  // entirely rather than showing an error — this is a search page, so a
+  // bad filter should just mean "don't filter by year", not break the page.
   const year = filters.year ? Number(filters.year) : undefined;
   if (year !== undefined && Number.isInteger(year)) {
     params.push(year);
@@ -390,11 +382,11 @@ export const searchPublicArtifacts = cache(async (filters: PublicArtifactFilters
 });
 
 /**
- * Cached wrapper around searchPublicArtifacts, for the sitemap's unfiltered
- * "every public artifact" read. Repeated calls (including the unfiltered
- * "show everything" case) hit this cache for up to 60s instead of
- * re-querying Postgres every time. /results uses the paginated version
- * below instead -- see searchPublicArtifactsPageCached.
+ * Same as searchPublicArtifacts above, but with the results cached for up
+ * to 60 seconds so we don't hit the database on every single request.
+ * Used by the sitemap, which needs "every public paper" with no filters.
+ * The main search-results page uses the paginated cached version below
+ * instead (searchPublicArtifactsPageCached).
  */
 // `unstable_cache(...)` is Next.js's own caching helper (different from
 // React's `cache()` used above -- see that comment for the distinction).
@@ -413,7 +405,7 @@ const RESULTS_MAX_PAGE_SIZE = 100;
 
 export interface PublicArtifactPage {
   records: PublicExamRecord[];
-  /** Total rows matching the filters, across all pages -- not just this page's length. */
+  /** How many results match in total, across every page — not just how many are on this one page. */
   total: number;
   page: number;
   limit: number;
@@ -421,22 +413,18 @@ export interface PublicArtifactPage {
 }
 
 /**
- * Paginated version of searchPublicArtifacts, for /results -- see the
- * full-site audit's pagination finding: unfiltered, that route was
- * rendering all ~300 published rows on one page (2,714 DOM elements, ~950ms
- * TTFB measured locally). `page`/`limit` are treated the same way `year` is
- * above: whatever a malformed/out-of-range searchParams value asks for,
- * clamp to something valid rather than erroring -- a page listing is not
- * the place for a 404. `limit` is clamped to RESULTS_MAX_PAGE_SIZE so the
- * param can't be used to opt back into the original unpaginated behavior.
- * Total count is a second query run alongside the page's row query -- see
- * the inline comment below for why, not a single `count(*) over()` query.
+ * Same search as above, but split into pages instead of returning
+ * everything at once — this is what powers the /results page, so it
+ * doesn't have to load hundreds of exam papers onto one screen.
  *
- * Not wrapped in React's cache(): /results calls this exactly once per
- * request (no duplicate call site the way getPublicArtifactBySlug had), so
- * there's nothing to dedupe here -- the unstable_cache layer below already
- * covers the cross-request case, matching searchPublicArtifactsCached's
- * existing single-layer pattern.
+ * If the page number or page size in the URL is invalid or out of range,
+ * we quietly fall back to a sensible value instead of showing an error —
+ * a results listing shouldn't break just because someone typed a strange
+ * number in the URL. The page size also has a hard maximum, so nobody can
+ * use the URL to force it back into loading everything at once.
+ *
+ * We don't need React's request-level caching here, since this function is
+ * only ever called once per page load anyway.
  */
 export async function searchPublicArtifactsPage(
   filters: PublicArtifactFilters,
@@ -452,14 +440,13 @@ export async function searchPublicArtifactsPage(
   const { clauses, params } = buildPublicArtifactFilterClauses(filters);
   const where = clauses.join(" and ");
 
-  // Two queries, not one "clever" count(*) over() attached to each
-  // returned row -- that approach silently loses the total whenever OFFSET
-  // skips past every matching row (any page number beyond the last one),
-  // since a window function only annotates rows that actually survive the
-  // LIMIT/OFFSET slice, and none do in that case. Run both concurrently
-  // (fix 3's "independent reads run in parallel" applies here too) so the
-  // extra query costs no more wall-clock time than the slower of the two,
-  // not their sum.
+  // We run two separate queries here: one for this page's results, and
+  // one just to count the total matches. A single combined query can give
+  // the wrong total when someone requests a page number that's past the
+  // last page, so it's simpler and more reliable to keep them separate.
+  // We run both at the same time (rather than one after the other) so
+  // this doesn't take any longer than a single query would.
+  //
   // `...params` is the "spread" operator: it unpacks all the items already
   // in `params` into this new array, so `dataParams` ends up as "everything
   // that was in params, plus limit, plus offset" -- without spread, this
@@ -481,11 +468,10 @@ export async function searchPublicArtifactsPage(
 }
 
 /**
- * Cached wrapper around searchPublicArtifactsPage, for /results -- same
- * reasoning as searchPublicArtifactsCached above (the route reads
- * searchParams, so it can't be page-level ISR'd; caching at the data layer
- * instead, keyed on the full filters+pagination argument so different
- * pages/searches don't collide).
+ * Same as searchPublicArtifactsPage above, but with the results cached for
+ * a short time so repeated identical searches don't have to hit the
+ * database each time. Each distinct combination of filters + page number
+ * gets its own cache entry, so different searches never mix results.
  */
 export const searchPublicArtifactsPageCached = unstable_cache(
   searchPublicArtifactsPage,
@@ -500,10 +486,10 @@ export interface SubjectWithCount {
 }
 
 /**
- * Subjects that have at least one publicly-visible artifact (published or
- * not_yet_recovered) for one exam instance — the "select a subject" step
- * of the browse drill-down. Subjects with nothing recorded yet are left
- * out rather than shown as a dead-end "0 papers" row.
+ * Lists subjects that have at least one paper the public can see, for one
+ * exam and year — this is the "pick a subject" step when browsing. A
+ * subject with nothing recorded for that year simply doesn't show up,
+ * instead of appearing as an empty, dead-end option.
  */
 export const listPublicSubjectsForInstance = cache(async (
   seriesCode: string,
@@ -530,11 +516,10 @@ export interface DownloadableYearFile {
 }
 
 /**
- * Every downloadable file for one exam instance's "Download all" zip —
- * status = 'published' only (unlike listPublicSubjectsForInstance's
- * PUBLIC_STATUSES, a 'not_yet_recovered' placeholder has no file to
- * include), joined to files so an artifact with no file row is left out
- * rather than producing a null entry.
+ * Gets every downloadable file for one exam and year, for the "download
+ * all" zip feature. Only truly published papers are included here (unlike
+ * the subject list above, a paper that's marked "not yet recovered" has no
+ * actual file to include, so it's left out).
  */
 export const listPublishedFilesForInstance = cache(async (
   seriesCode: string,
@@ -553,7 +538,7 @@ export const listPublishedFilesForInstance = cache(async (
   return rows.map((r) => ({ fileId: r.file_id, storageKey: r.storage_key, title: r.title }));
 });
 
-/** Most recently published artifacts, for the homepage "Recently added" list. */
+/** Gets the most recently published exam papers, for the homepage's "Recently added" list. */
 export const listRecentPublicArtifacts = cache(async (limit: number): Promise<PublicExamRecord[]> => {
   const rows = await query<PublicArtifactRow>(
     `${PUBLIC_ARTIFACT_SELECT} where a.status = 'published' order by a.published_at desc limit $1`,
@@ -586,12 +571,11 @@ export const getPublicArtifactBySlug = cache(async (
 });
 
 /**
- * Every publicly-visible artifact for one (series, subject) across all
- * years, oldest first, then by artifact type and paper number -- the
- * ordering a reader would browse a subject's papers in. Used by the
- * artifact detail page to derive prev/next navigation and the "other years
- * for this subject" list from a single extra query, rather than a per-row
- * existence check for each candidate neighbour.
+ * Every publicly-visible paper for one exam series and subject, across all
+ * years, listed oldest-first (the order a reader would naturally browse
+ * through them). Used on a paper's detail page to build the "previous /
+ * next" links and the "other years for this subject" list, all from one
+ * query rather than checking each neighbouring year separately.
  */
 export const listSubjectArtifacts = cache(async (
   seriesCode: string,
@@ -606,7 +590,10 @@ export const listSubjectArtifacts = cache(async (
   return rows.map(hydratePublicRecord);
 });
 
-// --- CLI: coverage matrix (spec section 11.3) -----------------------------
+// --- Command-line tool: builds the "coverage matrix" — a grid showing,
+// for every exam/year/subject combination, whether we have a published
+// paper, a paper still waiting on rights approval, no paper at all, or a
+// paper we know exists but haven't tracked down yet. -----------------------
 
 export type CoverageStatus = "published" | "verified_pending_rights" | "missing" | "not_yet_recovered";
 
@@ -669,7 +656,7 @@ export async function getCoverageMatrix(): Promise<CoverageCell[]> {
   return cells;
 }
 
-// --- CLI: ingest (spec section 6, 13.4) -------------------------------------
+// --- Command-line tool: adding a new exam paper into the archive -----------
 
 export interface IngestArtifactInput {
   examSeriesCode: string;
@@ -691,14 +678,14 @@ export interface IngestArtifactResult {
 }
 
 /**
- * Ingest one file: hash it, write it to storage, insert the artifact +
- * file row, and — regardless of any rights information the caller also
- * supplied — always create a rights_records row pinned to
- * `pending_institutional_approval` with no basis/evidence/approver yet.
- * The submitter (the CLI operator running `ingest`) cannot set the rights
- * decision directly; that only happens via `approveRights`, and only after
- * that can `publishArtifact` succeed (spec section 6.3: "Rights status
- * must be resolved before PUBLIC status").
+ * Adds one exam paper file into the archive: fingerprints the file (so we
+ * can detect duplicates later), saves it to storage, and creates its
+ * database records. No matter what rights information is passed in here,
+ * the paper always starts out marked "pending approval" — the person
+ * running this command cannot mark a paper as rights-cleared themselves.
+ * That has to happen separately, through `approveRights`, and only after
+ * that can the paper actually be published. This split exists on purpose,
+ * so a paper never becomes public before its usage rights are confirmed.
  */
 export async function ingestArtifact(input: IngestArtifactInput): Promise<IngestArtifactResult> {
   const series = await queryOne<ExamSeriesRow>("select * from exam_series where code = $1", [
@@ -719,12 +706,14 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
     paperNo: input.paperNo,
   });
 
-  // Storage write happens before the DB transaction, and outside it, since
-  // a storage failure should mean nothing is written to the database at
-  // all. If the DB transaction below fails after a successful write, the
-  // file is orphaned in storage rather than referenced by a row —
-  // acceptable for now; a real ingestion pipeline would reconcile orphans
-  // via the storage/DB export described in spec section 16.3.
+  // We save the file to storage BEFORE touching the database, and outside
+  // the database transaction. That way, if saving the file fails, nothing
+  // gets written to the database at all. The one downside: if the file
+  // saves fine but the database step afterwards fails, we end up with a
+  // "orphaned" file sitting in storage with no database record pointing
+  // to it. That's an acceptable trade-off for now — a future version could
+  // add a cleanup process to find and remove those leftover files.
+  //
   // `createHash("sha256").update(bytes).digest("hex")` runs the file's raw
   // bytes through the SHA-256 hashing algorithm, producing a short, fixed-
   // length fingerprint of the file's exact contents (as a hex-digit
@@ -841,7 +830,7 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
   });
 }
 
-// --- file serving (spec section 3.3: direct PDF download must always work) -
+// --- Serving files for download — a direct PDF download must always work --
 
 export interface DownloadableFile {
   storageKey: string;
@@ -851,9 +840,10 @@ export interface DownloadableFile {
 }
 
 /**
- * Only ever returns a file for an artifact whose CURRENT status is
- * "published" — checked live against the database on every call, not
- * cached, so a later rights_hold/withdrawal takes effect immediately.
+ * Only hands back a file if its exam paper is CURRENTLY published. We
+ * check this fresh against the database every single time (nothing is
+ * cached here), so that if a paper gets withdrawn or put on hold, its file
+ * stops being downloadable immediately — not after some delay.
  */
 export async function getFileForDownload(fileId: string): Promise<DownloadableFile | undefined> {
   const row = await queryOne<{
@@ -874,7 +864,7 @@ export async function getFileForDownload(fileId: string): Promise<DownloadableFi
   return { storageKey: row.storage_key, mime: row.mime, bytes: row.bytes, title: row.title };
 }
 
-// --- issues (spec section 8.5: correction/takedown intake) -----------------
+// --- Handling reports from the public — corrections, takedown requests, etc. ---
 
 export async function createIssue(input: {
   artifactId: string;
@@ -882,10 +872,9 @@ export async function createIssue(input: {
   description: string;
   contact: string | null;
 }): Promise<void> {
-  // queryWithoutRetry, not query: this INSERT isn't wrapped in a
-  // transaction and issues has no unique constraint to make a retry
-  // idempotent, so a connection reset between send and ack must fail once
-  // rather than risk silently inserting the same issue twice.
+  // We deliberately don't retry this save if it fails partway through.
+  // There's nothing stopping the same report from being saved twice if we
+  // retried, so it's safer to let it fail once than risk a duplicate.
   await queryWithoutRetry(
     `insert into issues (id, artifact_id, issue_type, description, contact, status)
      values ($1, $2, $3, $4, $5, 'open')`,
@@ -893,7 +882,8 @@ export async function createIssue(input: {
   );
 }
 
-// --- CLI: artifact list + rights approval + publish/unpublish (spec 6.3, 8.5) -
+// --- Command-line tool: listing exam papers, approving their rights
+// status, and publishing/unpublishing them --------------------------------
 
 export interface ArtifactSummary {
   id: string;
@@ -939,10 +929,10 @@ export async function listAllArtifacts(): Promise<ArtifactSummary[]> {
 }
 
 /**
- * Artifacts for one exam series within an inclusive year range — the
- * candidate set for the CLI's bulk `approve-rights`/`publish` modes (see
- * scripts/cli-lib.ts), which act on a whole (series, year-range) batch
- * instead of one artifact at a time.
+ * Gets exam papers for one exam series within a range of years (both ends
+ * included). This is what powers the command-line tool's bulk actions,
+ * which let someone approve rights or publish a whole batch of papers at
+ * once instead of one at a time.
  */
 export async function listArtifactsBySeriesYearRange(
   seriesCode: string,
@@ -957,11 +947,11 @@ export async function listArtifactsBySeriesYearRange(
 }
 
 /**
- * Records the institutional rights decision on an artifact's most recent
- * rights_records row: who approved it, on what basis, and the evidence
- * backing it up. This is the only way those three fields get filled in —
- * `ingestArtifact` always leaves them null. `publishArtifact` refuses to
- * run until all three are set (spec section 6.3, section 8.3).
+ * Records the official decision that a paper's usage rights have been
+ * cleared: who approved it, on what grounds, and the proof backing it up.
+ * This is the only way those three details ever get filled in — when a
+ * paper is first added, they're always left blank. And a paper can't be
+ * published until all three are recorded here.
  */
 export async function approveRights(
   artifactId: string,
@@ -1011,10 +1001,11 @@ export interface RightsGateStatus {
 }
 
 /**
- * Exported (not just used internally by publishArtifact) so the CLI's bulk
- * publish mode can pre-check every candidate artifact and report exactly
- * which ones lack rights approval, and why, before doing anything — see
- * scripts/cli-lib.ts's planBulkPublish.
+ * Checks whether a paper's rights approval is complete enough to publish.
+ * Made available outside this file (not just used internally) so the
+ * command-line tool's bulk-publish feature can check every candidate paper
+ * in advance and report exactly which ones aren't ready yet, and why,
+ * before actually publishing anything.
  */
 export async function checkRightsGate(artifactId: string): Promise<RightsGateStatus> {
   const rights = await queryOne<{ basis: string | null; approved_by: string | null; evidence_uri: string | null }>(
@@ -1033,12 +1024,12 @@ export async function checkRightsGate(artifactId: string): Promise<RightsGateSta
 }
 
 /**
- * The only place artifact status is ever set to "published". Unlike the
- * old admin UI's "Approve rights & publish" button, this does NOT resolve
- * the rights record itself — it only checks that `approveRights` has
- * already filled in basis, approved_by and evidence_uri, and refuses
- * (returning what's missing) otherwise. This is a new safeguard: rights
- * approval and publication are now two separate, explicit CLI steps.
+ * The only place in the whole app where a paper actually gets marked
+ * "published". This does NOT approve the rights itself — it only checks
+ * that `approveRights` has already been done (basis, approver, and
+ * evidence all filled in), and refuses to publish otherwise, telling you
+ * exactly what's still missing. Approving rights and publishing are kept
+ * as two separate, deliberate steps on purpose, as a safety check.
  */
 // `{ title: string } | { missing: string[] }` is a union (see
 // src/types/domain.ts) of two entirely different object shapes: this
@@ -1079,9 +1070,8 @@ export async function publishArtifact(
 }
 
 /**
- * Flips a published artifact back to a non-public status and logs the
- * action. New command — the old admin UI had no way to un-publish once
- * published.
+ * Takes a published paper back down (e.g. withdrawing it, or putting it on
+ * a rights hold) and records that this happened.
  */
 export async function unpublishArtifact(
   artifactId: string,
