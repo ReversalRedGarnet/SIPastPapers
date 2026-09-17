@@ -5,10 +5,12 @@ import Link from "next/link";
 import { listExamSeries, listRecentPublicArtifacts, listSubjects, listYears } from "@/lib/db/queries";
 import { seriesDisplayLabel } from "@/lib/format";
 
-// Exam content changes only when the operator publishes/unpublishes via
-// the CLI (bursty, not continuous) — ISR with a 5-minute revalidate window
-// means most visitors hit a cached page instead of a live DB round trip,
-// at the cost of up to ~5 minutes' staleness after a fresh publish.
+// The list of papers only changes when the operator publishes or
+// unpublishes something using the command-line tool — it doesn't change
+// continuously. So we cache this page for 5 minutes at a time. That means
+// most visitors get a fast, cached version of the page instead of a fresh
+// database read every time, at the cost of the page possibly being up to
+// 5 minutes out of date right after something new gets published.
 export const revalidate = 300;
 
 // This whole file describes the homepage. Because the function is
@@ -21,19 +23,18 @@ export const revalidate = 300;
 // work -- here, several database reads -- before it has everything it
 // needs to describe the finished page.
 export default async function HomePage() {
-  // `await` pauses this function until whatever's on its right finishes,
-  // then continues with the result. `Promise.all([...])` runs a whole list
-  // of separate slow operations *at the same time* instead of one after
-  // another, and only continues once every one of them is done -- so all
-  // four database questions below happen together instead of one, then the
-  // next, then the next (see the comment beneath for why that's safe here).
-  // The square brackets on the left (`const [a, b, c, d] = ...`) are "array
-  // destructuring": Promise.all hands back a list of four results in the
-  // same order they were requested, and this line unpacks that list into
-  // four separately named variables in one step.
+  // These four pieces of data don't depend on each other, so we fetch
+  // them all at the same time instead of one after another — which means
+  // this page loads about four times faster than it otherwise would.
   //
-  // Four independent reads -- none depends on another's result -- so they
-  // run concurrently instead of as four sequential round trips to Neon.
+  // `await` pauses this function until whatever's on its right finishes,
+  // then continues with the result. `Promise.all([...])` is what actually
+  // runs a whole list of separate slow operations at the same time, only
+  // continuing once every one of them is done. The square brackets on the
+  // left (`const [a, b, c, d] = ...`) are "array destructuring":
+  // Promise.all hands back a list of four results in the same order they
+  // were requested, and this line unpacks that list into four separately
+  // named variables in one step.
   const [examSeries, subjects, years, recent] = await Promise.all([
     listExamSeries(),
     listSubjects(),

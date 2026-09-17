@@ -1,14 +1,14 @@
--- SI National Exam Archive — initial schema
--- Source: PROJECT_SPEC.md section 4.2 ("Suggested relational schema").
+-- This file sets up the database tables for the SI National Exam Archive.
+-- Think of it as the "blueprint" for how exam data is stored and organized.
 --
--- Applied via scripts/db-migrate.ts (npm run db:migrate) — see
--- migrations/README.md for the one-time setup command. Not run
--- automatically by the app at request time.
+-- You don't need to run this file yourself when the app starts — it's
+-- applied once, ahead of time, using the "npm run db:migrate" command.
+-- See migrations/README.md for how to run that.
 --
--- Controlled vocabularies (which strings are valid for `type`, `status`,
--- `rights_status`, etc.) are explicitly deferred per spec section 4.3 —
--- these columns are left as plain TEXT rather than CHECK-constrained enums
--- so that vocabulary work doesn't require a schema migration.
+-- A few columns below (like "type", "status", "rights_status") just store
+-- plain text instead of a fixed list of allowed values. That's on purpose:
+-- it lets us add new valid values later without having to change the
+-- database structure again.
 
 create extension if not exists pgcrypto;
 
@@ -104,11 +104,9 @@ create table rights_records (
   approved_at    timestamptz,
   expiry_date    date,
   notes          text,
-  -- Needed so "the most recent rights record for this artifact" (an
-  -- artifact can in principle accumulate more than one over time) has a
-  -- well-defined ordering. The original sqlite port used SQLite's implicit
-  -- rowid for this, which has no Postgres equivalent — see PROJECT_SPEC.md
-  -- decision log.
+  -- A single exam paper can end up with more than one rights record over
+  -- time (e.g. if its permission status changes). This timestamp is what
+  -- lets us figure out which one is the newest.
   created_at     timestamptz not null default now()
 );
 

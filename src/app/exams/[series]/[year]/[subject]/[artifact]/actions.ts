@@ -18,10 +18,11 @@ const VALID_ISSUE_TYPES = [
 ];
 
 /**
- * Report-a-problem intake (spec section 8.5 step 1: "Receive the report
- * and identify the affected artifact"). This only records the report —
- * placing an artifact on rights hold, reviewing it, and resolving it are
- * later, separate CLI steps not built yet.
+ * Handles the "report a problem" form on a paper's page: takes in what
+ * someone reports and saves it. This is just the intake step — it only
+ * records the report. Actually putting a paper on hold, reviewing the
+ * report, and resolving it are separate steps done later by the operator
+ * through the command-line tool, and aren't built yet.
  */
 // `FormData` is a standard web API representing everything submitted in an
 // HTML form; `.get("artifactId")` reads one named field's value back out

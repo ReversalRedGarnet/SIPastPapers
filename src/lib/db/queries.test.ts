@@ -1,18 +1,16 @@
 /**
- * Covers the publish safeguard added alongside the CLI (PROJECT_SPEC.md
- * section 11.1/11.2): publish must refuse until the artifact's rights
- * record has basis, approved_by and evidence_uri all set via
- * approveRights, and must succeed once they are.
+ * Tests the "publishing safety check": a paper can't be published until
+ * its rights record has all three of basis, approved_by, and evidence_uri
+ * filled in via approveRights — and it should succeed once they are.
  *
- * Runs against the real (live Neon) Postgres database, but every test body
- * is wrapped in withRolledBackTransaction (src/lib/db/client.ts), which
- * always rolls back at the end — so nothing here is ever actually
- * committed, no matter how many times this suite runs. This requires
- * `npm run db:migrate` to have been run at least once against the target
- * database already (for the schema + seeded reference data — see
- * migrations/README.md); it does not require or use a separate test
- * database. Storage still writes to an isolated temp directory via
- * SIPASTPAPERS_STORAGE_ROOT, same as before.
+ * These tests run against the real database, but every test is wrapped in
+ * withRolledBackTransaction (see src/lib/db/client.ts), which always
+ * undoes its changes at the end. So nothing here is ever actually saved
+ * for real, no matter how many times these tests run. You do need to have
+ * run `npm run db:migrate` at least once against the database beforehand
+ * (to set up the tables and basic reference data) — these tests don't use
+ * a separate test database. File storage is written to a temporary
+ * throwaway folder, as before.
  */
 
 import { test, before, after } from "node:test";
@@ -29,13 +27,13 @@ before(async () => {
   if (existsSync(".env.local")) {
     process.loadEnvFile(".env.local");
   }
-  // Force local storage regardless of whatever STORAGE_BACKEND is set to
-  // for real usage in .env.local (e.g. "r2") — this suite only needs
-  // DATABASE_URL_POOLED from that file, and must never touch real R2.
+  // Force this test to use local file storage, no matter what's set up
+  // for regular use (e.g. cloud storage) — these tests only need the
+  // database connection and must never touch real cloud storage.
   process.env.STORAGE_BACKEND = "local";
-  // Same patient connection budget as the CLI (see src/lib/db/client.ts's
-  // getRetryBudget()) — this is a batch test run, not a live page load, so
-  // it should ride out a slow Neon cold-start rather than fail fast.
+  // Give the database connection extra patience here, same as the
+  // command-line tool — this is a batch test run, not a live page load,
+  // so it's fine to wait out a slow database wake-up instead of failing fast.
   process.env.DB_POOL_PROFILE = "cli";
   tmpStorageDir = mkdtempSync(path.join(tmpdir(), "sipp-queries-test-storage-"));
   process.env.SIPASTPAPERS_STORAGE_ROOT = tmpStorageDir;
@@ -46,7 +44,7 @@ after(async () => {
   try {
     rmSync(tmpStorageDir, { recursive: true, force: true });
   } catch {
-    // Best-effort cleanup.
+    // It's fine if this cleanup step fails — it's just tidying up a temp folder.
   }
   await closePool();
 });
@@ -93,10 +91,11 @@ test("publish is still refused if only some rights fields are set", async () => 
       file: { buffer: Buffer.from("%PDF-1.4\n%test2\n"), mime: "application/pdf" },
     });
 
-    // approveRights requires basis/approvedBy/evidenceUri together, so
-    // simulate a partially-resolved rights record the way a real one could
-    // exist mid-review (e.g. evidence not yet attached) by approving fully
-    // and then knocking one field back out.
+    // approveRights normally requires basis, approvedBy, and evidenceUri
+    // to all be set together. To test what happens with only some of them
+    // set (which can genuinely happen mid-review — e.g. evidence not
+    // attached yet), we approve fully first and then remove one field
+    // afterwards to simulate that in-between state.
     await queries.approveRights(artifactId, {
       basis: "teacher-verified",
       approvedBy: "Test Verifier",

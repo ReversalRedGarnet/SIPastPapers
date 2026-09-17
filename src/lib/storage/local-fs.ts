@@ -4,10 +4,9 @@ import type { Readable } from "node:stream";
 import type { PutResult, StorageProvider } from "./types";
 
 /**
- * Local filesystem implementation of StorageProvider (section 5.1).
- * Stores files under `<repo root>/local-storage/<key>`. The default
- * backend (STORAGE_BACKEND=local, or unset) — see r2.ts for the
- * Cloudflare R2 alternative.
+ * Saves files on the local disk, under `<project folder>/local-storage/<key>`.
+ * This is the default storage option (used when STORAGE_BACKEND is set to
+ * "local", or not set at all) — see r2.ts for the cloud-storage alternative.
  */
 // A `class` is a template for creating objects that bundle related data
 // together with the functions that act on it. `implements StorageProvider`
@@ -60,9 +59,10 @@ export class LocalFilesystemStorage implements StorageProvider {
   }
 
   /**
-   * Existence is checked upfront (rather than letting createReadStream's
-   * async 'error' event surface ENOENT) so this matches get()'s
-   * Promise<Readable | null> contract instead of an error-emitting stream.
+   * We check whether the file exists first, rather than waiting for the
+   * stream itself to report an error if it's missing. That way, this
+   * behaves consistently with get() above: it returns null when the file
+   * doesn't exist, rather than throwing an error partway through.
    */
   async getStream(key: string): Promise<Readable | null> {
     const resolved = this.resolve(key);
@@ -93,10 +93,12 @@ export class LocalFilesystemStorage implements StorageProvider {
   }
 
   locate(key: string): string {
-    // No public web server route exposes /local-storage — this is a
-    // developer-facing path, not a browser-loadable URL. A real download
-    // route would stream from a StorageProvider rather than serving this
-    // directory directly.
+    // This path isn't reachable from a web browser — there's no public web
+    // address that serves files straight out of the local-storage folder.
+    // This is just an internal reference for developers. A real download
+    // feature would read the file through the storage system above (and
+    // send it to the browser itself), rather than exposing this folder
+    // directly.
     return `local-storage/${key}`;
   }
 }

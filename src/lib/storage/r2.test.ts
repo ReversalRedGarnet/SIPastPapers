@@ -1,9 +1,9 @@
 /**
- * Covers R2Storage against a hand-written fake S3Client (just enough of
- * `.send()` to answer Put/Get/Head/Delete object commands from an
- * in-memory Map) — no real R2 credentials, network access, or the
- * `aws-sdk-client-mock` package needed. See R2StorageConfig's `client`
- * parameter in src/lib/storage/r2.ts.
+ * Tests R2Storage using a hand-written fake stand-in for the cloud storage
+ * connection (just enough of it to handle save/read/check/delete
+ * commands, backed by an in-memory list). No real cloud account,
+ * credentials, or network access is needed to run these tests. See the
+ * `client` parameter in src/lib/storage/r2.ts.
  */
 
 import { test } from "node:test";
@@ -25,7 +25,7 @@ function notFoundError(name: string, httpStatusCode = 404) {
   return err;
 }
 
-/** Minimal fake standing in for S3Client — an in-memory object store. */
+/** A stand-in for the real cloud storage connection — just an in-memory list of saved files. */
 function createFakeS3Client() {
   const objects = new Map<string, { body: Buffer; contentType?: string }>();
 
@@ -40,9 +40,10 @@ function createFakeS3Client() {
       if (command instanceof GetObjectCommand) {
         const obj = objects.get(command.input.Key!);
         if (!obj) throw notFoundError("NoSuchKey");
-        // A real Node Readable (like the actual SDK hands back under the
-        // Node.js request handler this app runs), with transformToByteArray
-        // stapled on so get()'s buffered path keeps working too.
+        // A real Node.js stream, matching what the actual cloud storage
+        // toolkit hands back in this app. We also attach
+        // transformToByteArray here so the get() method's simpler,
+        // whole-file-at-once code path keeps working in these tests too.
         const body = Readable.from(obj.body) as Readable & { transformToByteArray: () => Promise<Uint8Array> };
         body.transformToByteArray = async () => new Uint8Array(obj.body);
         return { Body: body };

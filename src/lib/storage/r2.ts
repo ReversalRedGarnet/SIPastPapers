@@ -21,16 +21,16 @@ function isNotFoundError(err: unknown): boolean {
 }
 
 /**
- * Cloudflare R2 implementation of StorageProvider (spec section 5). R2 is
- * S3-compatible, so this is just the AWS SDK's S3 client pointed at R2's
- * endpoint (https://<account-id>.r2.cloudflarestorage.com) with R2 API
- * token credentials — no R2-specific SDK needed. Selected via
- * STORAGE_BACKEND=r2; see src/lib/storage/index.ts for how the env vars
- * in .env.example map to R2StorageConfig.
+ * Saves files to Cloudflare's cloud storage (called "R2"). R2 works the
+ * same way as Amazon's S3 storage service, so this just uses Amazon's own
+ * toolkit, pointed at Cloudflare's address instead of Amazon's — there's
+ * no need for a separate Cloudflare-specific toolkit. This gets used when
+ * STORAGE_BACKEND is set to "r2"; see src/lib/storage/index.ts for how the
+ * settings in .env.example get turned into the config below.
  *
- * The `client` parameter exists so tests can inject a fake S3Client
- * (anything with a matching `send()`) instead of talking to real R2 —
- * see src/lib/storage/r2.test.ts.
+ * The optional `client` parameter lets tests substitute a fake stand-in
+ * for the real connection, so tests can run without actually talking to
+ * Cloudflare — see src/lib/storage/r2.test.ts.
  */
 export class R2Storage implements StorageProvider {
   // `Pick<S3Client, "send">` is a "utility type": instead of writing a
@@ -86,12 +86,13 @@ export class R2Storage implements StorageProvider {
   }
 
   /**
-   * `result.Body` is typed as `Readable | ReadableStream | Blob`
-   * (`StreamingBlobPayloadOutputTypes`) because the AWS SDK also runs in
-   * browsers/Workers, but this app only ever runs the Node.js request
-   * handler, which always hands back a Node `Readable` -- checked rather
-   * than blindly cast, so a future SDK/runtime change fails loudly here
-   * instead of producing a stream `.append()` can't actually read.
+   * The cloud storage toolkit's types say the response body could be a few
+   * different kinds of stream, since the same toolkit also runs in web
+   * browsers. But this app only ever runs on a plain Node.js server, which
+   * always gives back one specific, well-understood kind of stream. We
+   * double-check that assumption here (rather than just assuming it's
+   * true), so that if a future update ever changes that behavior, we get a
+   * clear error message here instead of a confusing failure somewhere else.
    */
   async getStream(key: string): Promise<Readable | null> {
     try {
@@ -126,13 +127,14 @@ export class R2Storage implements StorageProvider {
   }
 
   locate(key: string): string {
-    // Not a browser-loadable URL (the bucket isn't configured for public
-    // access) — objects are served by proxying bytes through
-    // /api/files/[fileId] (see that route), which re-checks the
-    // artifact's rights/publication status on every request. A presigned
-    // URL would remain valid for its TTL even after a rights change, so
-    // it isn't used here; see src/lib/storage/index.ts for the fuller
-    // rationale.
+    // This isn't a web address you can open directly in a browser (the
+    // storage bucket isn't set up for public access). Files are instead
+    // served through our own /api/files/[fileId] route, which re-checks
+    // whether the paper is still allowed to be downloaded every single
+    // time it's requested. We deliberately don't use a temporary
+    // "presigned" direct link here, because that kind of link would keep
+    // working for a while even after a paper's rights status changed —
+    // see src/lib/storage/index.ts for more on why.
     return `r2://${this.bucket}/${key}`;
   }
 }

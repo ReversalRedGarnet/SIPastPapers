@@ -6,16 +6,16 @@ import { Pool, type PoolClient, type QueryResultRow } from "pg";
 // Pool once one's been created, or is simply "not set yet."
 let pool: Pool | undefined;
 
-// --- retry-with-backoff for transient connection failures -------------------
+// --- Automatically retrying when the database connection has a brief hiccup ---
 //
-// Observed against Neon: acquiring a connection can fail with ECONNRESET
-// (rather than a clean auth error) while the pooler/proxy is waiting on a
-// suspended compute to wake from Neon's free/scale-tier auto-suspend — the
-// `pg` client has no built-in retry for that, and without one a single slow
-// wake-up surfaces as a hard failure. Only retry errors that indicate the
-// TCP/TLS connection itself was never established or was dropped — never a
-// query-level error (bad SQL, constraint violation, etc.), which would just
-// fail identically on retry.
+// Our database provider (Neon) sometimes "sleeps" its database to save
+// resources when it hasn't been used in a while, and takes a moment to
+// wake back up. During that moment, trying to connect can briefly fail
+// even though nothing is actually wrong. So here we detect that specific
+// kind of failure and retry it automatically, rather than giving up right
+// away. We only retry connection problems like this — never a genuine
+// error in the data or the SQL itself, since retrying that would just fail
+// again in exactly the same way.
 const TRANSIENT_CONNECTION_ERROR_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE"]);
 
 // `unknown` means "this could be absolutely anything -- a caught error
@@ -28,30 +28,26 @@ function isTransientConnectionError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const code = (err as NodeJS.ErrnoException).code;
   if (code && TRANSIENT_CONNECTION_ERROR_CODES.has(code)) return true;
-  // Covers both "Connection terminated unexpectedly" (socket dropped) and
-  // "Connection terminated due to connection timeout" (pg's own
-  // connectionTimeoutMillis firing) — neither carries an .code, only this
-  // message text differs between them.
+  // These particular connection failures don't come with an error code
+  // (unlike the ones checked above), so we have to recognize them by their
+  // message text instead.
   return /connection terminated/i.test(err.message);
 }
 
 const RETRY_BASE_DELAY_MS = 500;
 
 /**
- * How long to wait for a connection, and how many times to retry a
- * transient failure, differs by *who's* waiting:
- *   - "web": a visitor's page load. A real outage should fail fast rather
- *     than hang the request for tens of seconds only to possibly be killed
- *     mid-retry by the platform's own function timeout anyway.
- *   - "cli": an operator-run batch script (ingest, bulk approve-rights,
- *     etc.), where nothing else is waiting on the result and it's worth
- *     riding out a slow Neon cold-start rather than failing on the first
- *     blip.
- * "web" is the default (safe for the Next.js app without any config);
- * scripts/cli.ts and the DB test suites opt into "cli" explicitly by
- * setting DB_POOL_PROFILE=cli before the pool is ever created (it's read
- * lazily — see resolveConnectionString below — so this only has to happen
- * before the first actual query/connect, not before this module loads).
+ * How patient we are about a slow or failing connection depends on who's
+ * asking:
+ *   - "web": someone visiting a page in their browser. If the database is
+ *     genuinely down, we want to fail quickly rather than making a real
+ *     visitor sit and wait for a long time.
+ *   - "cli": the command-line tool, running as a batch job with nobody
+ *     waiting on a webpage. Here it's worth waiting longer and trying a
+ *     few more times, since there's no rush.
+ * The app defaults to the "web" settings automatically. The command-line
+ * tool and the test suite switch to "cli" mode by setting the
+ * DB_POOL_PROFILE environment variable before they start.
  */
 interface RetryBudget {
   connectionTimeoutMillis: number;
@@ -68,12 +64,11 @@ function getRetryBudget(): RetryBudget {
 }
 
 /**
- * Retries `fn` up to the active profile's retryAttempts with exponential
- * backoff (500ms, 1000ms, ...), but only when the failure looks like a
- * dropped/never-established connection (see isTransientConnectionError) —
- * anything else (including a query that ran and failed) is rethrown
- * immediately. With the "web" profile's retryAttempts of 1, this makes zero
- * retries — the loop below still runs once, just never re-enters.
+ * Runs the given function, and if it fails because of a dropped/never-made
+ * connection, tries again after a short pause (waiting a bit longer each
+ * time: 500ms, then 1000ms, and so on). Any other kind of failure is
+ * passed straight through immediately, with no retry. In "web" mode
+ * (retryAttempts = 1), this effectively never retries at all.
  */
 // The `<T>` here is a "generic": a placeholder type, filled in by whatever
 // this function is actually used with. `withRetry` needs to work for any
@@ -103,11 +98,11 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Deliberately computed lazily inside getPool() (not as a module-level
- * constant): a module-level constant would be evaluated as soon as
- * anything imports this module — including transitively — which can
- * happen before a test's setup code (or scripts/cli.ts's .env.local
- * loading) has had a chance to set the env var.
+ * We deliberately look this up only when it's actually needed (inside
+ * getPool(), below), rather than once when the file is first loaded. That
+ * way, if something else needs to set up the connection details first
+ * (like a test loading its environment variables), it still has a chance
+ * to do so before this is read.
  */
 function resolveConnectionString(): string {
   const url = process.env.DATABASE_URL_POOLED;
@@ -121,34 +116,35 @@ function resolveConnectionString(): string {
 }
 
 /**
- * The app's runtime connection pool, pointed at Neon's pooled connection
- * string (see .env.example) so many short-lived serverless invocations
- * don't each open a direct Postgres connection. Schema migrations run
- * separately via scripts/db-migrate.ts against the *unpooled* DATABASE_URL
- * — see that file and migrations/README.md.
+ * The app's shared connection pool, pointed at Neon's "pooled" connection
+ * address (see .env.example). This lets many short-lived requests share
+ * connections instead of each one opening a brand new direct connection to
+ * Postgres. Database migrations are run separately, using a different,
+ * direct (non-pooled) connection — see scripts/db-migrate.ts and
+ * migrations/README.md.
  */
 function getPool(): Pool {
   if (pool) return pool;
   pool = new Pool({
     connectionString: resolveConnectionString(),
-    // Without this, a stalled connection (e.g. a Neon compute that never
-    // finishes waking up) hangs on the underlying OS/network timeout
-    // instead of failing predictably — bound it so callers (and the retry
-    // wrapper above) see a definite failure instead of an indefinite hang.
-    // See getRetryBudget() above for what sets this per context.
+    // Without a limit here, a stuck connection (say, a database that's
+    // taking a long time to wake up) could hang indefinitely instead of
+    // failing in a predictable amount of time. This puts a clear time
+    // limit on it, so callers (and the retry logic above) always get a
+    // definite answer — success or failure — rather than an endless wait.
     connectionTimeoutMillis: getRetryBudget().connectionTimeoutMillis,
   });
   return pool;
 }
 
 /**
- * Holds the PoolClient for the currently-open transaction (see
- * withTransaction below), so that query()/queryOne() calls made anywhere
- * during that transaction — including deep inside functions that have no
- * idea a transaction is open — automatically run on the same connection
- * instead of grabbing an arbitrary one from the pool. This is what lets
- * query() and withTransaction() be called independently throughout
- * queries.ts while still composing correctly.
+ * Keeps track of which database connection the current transaction (see
+ * withTransaction, below) is using. This means any query()/queryOne() call
+ * made anywhere during that transaction — even deep inside a function that
+ * has no idea a transaction is even happening — automatically runs on
+ * that same connection, instead of grabbing a random one from the pool.
+ * That's what lets different functions call query() and withTransaction()
+ * independently while still working correctly together.
  */
 const activeClient = new AsyncLocalStorage<PoolClient>();
 
@@ -164,12 +160,12 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   params: unknown[] = []
 ): Promise<T[]> {
   const client = activeClient.getStore();
-  // Only retry the no-transaction path: a query on an already-open
-  // transaction client that hits a dropped connection means that
-  // transaction is dead, and retrying just this one statement on a broken
-  // connection (or against a fresh one that never ran the earlier
-  // statements) would be wrong — let that fail and propagate up to whatever
-  // called withTransaction.
+  // We only retry when we're NOT already inside a transaction. If a query
+  // inside an already-open transaction hits a dropped connection, that
+  // whole transaction is effectively dead — retrying just this one
+  // statement (on a broken connection, or a fresh one that never ran the
+  // earlier statements) would be wrong. In that case we let it fail and
+  // pass the error up to whatever called withTransaction.
   const result = client
     ? await client.query<T>(text, params)
     : await withRetry(() => getPool().query<T>(text, params));
@@ -177,12 +173,13 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
 }
 
 /**
- * Like query(), but never retried. For a non-transactional write where a
- * retry after an ambiguous connection reset (statement sent, response
- * lost) could silently duplicate the write, and there's no natural unique
- * constraint to make a retry idempotent — see createIssue in
- * src/lib/db/queries.ts, its only caller. Failing once and surfacing the
- * error to the caller is safer than risking a duplicate row.
+ * Same as query() above, but never retries. This matters for a write that
+ * isn't wrapped in a transaction and has no way to safely run twice: if a
+ * connection drops right after the write was sent but before we get
+ * confirmation back, we genuinely don't know whether it went through.
+ * Retrying could create a duplicate. It's safer to just fail and let the
+ * caller know, instead of risking a duplicate row. (Its only current use
+ * is createIssue in src/lib/db/queries.ts.)
  */
 export async function queryWithoutRetry<T extends QueryResultRow = QueryResultRow>(
   text: string,
@@ -202,20 +199,22 @@ export async function queryOne<T extends QueryResultRow = QueryResultRow>(
 }
 
 /**
- * Runs `fn` inside a begin/commit-or-rollback block on one dedicated
- * connection, mirroring the old sqlite version's
- * db.exec("begin")/commit/rollback pattern. If a transaction is already
- * open (i.e. this is a nested call, or a test wrapped the whole thing in
- * withRolledBackTransaction below), reuses that connection instead of
- * opening a second, independent transaction — Postgres has no true nested
- * transactions without savepoints, and the outer transaction's eventual
- * commit/rollback already covers everything done here.
+ * Runs the given function as a single database transaction: either
+ * everything inside it succeeds and gets saved together, or if anything
+ * fails, all of it is undone together. If we're already inside a
+ * transaction (this function was called again from within itself, or a
+ * test wrapped everything in withRolledBackTransaction below), we just
+ * reuse that existing transaction rather than trying to start a separate
+ * one nested inside it — Postgres doesn't really support true nested
+ * transactions, and the outer one will already save or undo everything
+ * when it finishes.
  */
 export async function withTransaction<T>(fn: () => Promise<T>): Promise<T> {
   if (activeClient.getStore()) return fn();
 
-  // Retrying connect() is safe here: nothing has been sent to Postgres yet,
-  // so a fresh attempt on a fresh connection can't duplicate or skip work.
+  // It's safe to retry just the act of connecting here: since nothing has
+  // been sent to the database yet, trying again on a fresh connection
+  // can't accidentally repeat or skip any work.
   const client = await withRetry(() => getPool().connect());
   // A `finally` block (added on to try/catch -- see withRetry above) always
   // runs last, whether the `try` succeeded or the `catch` had to handle an
@@ -235,11 +234,10 @@ export async function withTransaction<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Test-only: identical to withTransaction, except the transaction is
- * always rolled back at the end regardless of whether `fn` succeeded —
- * so tests can exercise real queries against the real (live Neon)
- * database without ever leaving data behind. See src/lib/db/*.test.ts and
- * scripts/cli-lib.test.ts.
+ * Used only in tests. Works just like withTransaction above, except it
+ * always undoes everything at the end, whether or not the function
+ * succeeded. This lets tests run real queries against the real database
+ * without leaving any test data behind afterwards.
  */
 export async function withRolledBackTransaction<T>(fn: () => Promise<T>): Promise<T> {
   const client = await withRetry(() => getPool().connect());
@@ -252,7 +250,7 @@ export async function withRolledBackTransaction<T>(fn: () => Promise<T>): Promis
   }
 }
 
-/** Test-only: closes the pool so a test process can exit promptly instead of hanging on an open connection. */
+/** Used only in tests: closes the connection pool so the test process can exit right away instead of hanging. */
 export async function closePool(): Promise<void> {
   if (pool) {
     await pool.end();

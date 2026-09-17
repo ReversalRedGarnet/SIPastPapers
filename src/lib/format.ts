@@ -26,13 +26,14 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Public-facing display labels for exam series, keyed by the stable
- * exam_series.code (never the internal name) — see PROJECT_SPEC.md scope
- * baseline. This is display-only: the underlying codes (sif3-sijsc,
- * sisc-l1, sisc-l2-sinf6) and their combined internal names (e.g.
- * "SIF3 / SIJSC") are unchanged in the database, filenames, ingest, and
- * CLI output. SIF3 and SIJSC already share one series row/code, as do
- * SISC Level 2 and SINF6, so each maps to a single public label here.
+ * Friendlier public-facing names for exam series, shown to visitors
+ * instead of the internal codes/names. This only affects what's
+ * displayed on screen — the underlying codes (sif3-sijsc, sisc-l1,
+ * sisc-l2-sinf6) and their combined internal names (e.g. "SIF3 / SIJSC")
+ * stay the same everywhere else: in the database, file names, and
+ * command-line tool output. SIF3 and SIJSC already share one combined
+ * entry, as do SISC Level 2 and SINF6, so each one only needs a single
+ * public-facing label here.
  */
 // `Record<string, string>` is a TypeScript type meaning "an object where
 // every key and every value is text" -- it's how we describe a lookup
@@ -44,7 +45,7 @@ const SERIES_DISPLAY_LABEL: Record<string, string> = {
   "sisc-l2-sinf6": "Form 6 / Year 12",
 };
 
-/** Falls back to the raw code for any series not in the map above. */
+/** Falls back to showing the plain code if this exam series isn't in the friendly-name list above. */
 export function seriesDisplayLabel(seriesCode: string): string {
   // `??` is the "nullish coalescing" operator: it means "use the value on
   // the left, unless it's missing (null/undefined), in which case fall

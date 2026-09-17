@@ -3,23 +3,27 @@ import { listExamSeries, searchPublicArtifactsCached } from "@/lib/db/queries";
 import { listBrowseYears } from "@/lib/browse-years";
 import { SITE_URL } from "@/lib/site";
 
-// Content changes only when the operator publishes via the CLI -- matches
-// the revalidate window used by the browse tree pages themselves.
+// The list of pages only changes when new papers get published through
+// the command-line tool, so it's fine to only rebuild this sitemap once
+// an hour — matching the same refresh interval used by the browse pages
+// themselves.
 export const revalidate = 3600;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const [examSeries, records] = await Promise.all([
     listExamSeries(),
-    // Cached, unfiltered read -- same query /results uses for "show
-    // everything". A crawler re-fetching the sitemap shouldn't force a
-    // fresh full-table read every time.
+    // Reuses the same cached, "show everything" query the results page
+    // uses. A search engine re-fetching the sitemap shouldn't force a
+    // full, fresh read of every single paper every time.
     searchPublicArtifactsCached({}),
   ]);
   const years = listBrowseYears();
 
-  // Only records with an actual file are worth sending a crawler to --
-  // 'not_yet_recovered' placeholders have no document, so a page for one is
-  // thin/empty content rather than something worth indexing.
+  // Only include papers that actually have a downloadable file — a paper
+  // that's just marked "not yet recovered" has no real document behind
+  // it, so its page would be mostly empty and isn't worth pointing search
+  // engines to.
+  //
   // `.filter()` builds a new, shorter list containing only the items for
   // which the given function returns true -- here, only records that have
   // both a file and a subject slug are kept.
@@ -38,10 +42,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     }
   }
 
-  // Subject pages beyond the literal ask, added because they're genuine,
-  // unique, indexable content (one subject's paper list) -- but only where
-  // at least one paper actually has a file, for the same thin-content
-  // reason as the artifact filter above.
+  // We also include subject pages (even though nothing above strictly
+  // required it) since each one shows a genuinely unique list of papers
+  // for that subject, and is worth having search engines find. As above,
+  // we only include a subject page if at least one of its papers actually
+  // has a file to show.
   const subjectPaths = new Set<string>();
   for (const r of withFiles) {
     subjectPaths.add(`${r.examSeriesCode}/${r.year}/${r.subjectSlug}`);
