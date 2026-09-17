@@ -118,14 +118,6 @@ downside of dropping the sqlite fallback is small. Run
 `npm run db:migrate` once against a fresh database before `npm run dev`,
 `npm run cli`, or `npm run test`.
 
-## Not yet built
-
-Real authentication (not needed for the CLI, but relevant if a real
-multi-operator admin surface is ever built), payments, AI features, a full
-acquisition/verification pipeline, OCR, duplicate detection beyond the
-exact SHA-256/unique-key checks, and everything else in
-`PROJECT_SPEC.md` not listed above.
-
 ## Stack
 
 - Next.js / TypeScript (App Router) — public frontend; the only write path
