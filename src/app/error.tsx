@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { useEffect } from "react";
 
-// Error boundaries must be Client Components. This wraps every page/layout
-// below the root layout (see AGENTS.md/Next's docs), so the site
-// header/nav/footer still render around it -- only global-error.tsx (which
-// replaces the whole <html>/<body>, not used here) would lose that chrome.
-// Metadata exports aren't supported in a Client Component, so this page has
-// no <title> override; it inherits the root layout's default title.
+// This is the page shown whenever something goes wrong loading any page on
+// the site. It has to run in the browser (rather than only on the
+// server), which is a technical requirement for this kind of "catch any
+// error" page in Next.js. Because it wraps every page under the main
+// layout, the site's header/nav/footer still show up around this error
+// message. This page also can't set its own browser tab title (another
+// technical limitation of this kind of page), so it just uses the site's
+// default title.
 export default function Error({
   error,
   retry,

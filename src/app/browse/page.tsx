@@ -11,8 +11,9 @@ export const metadata: Metadata = {
     "Browse past Solomon Islands national exam papers by exam level — SIF3/SIJSC, SISC Level 1, and SISC Level 2/SINF6 — then by year and subject.",
 };
 
-// The exam series list essentially never changes (a new series is a rare,
-// deliberate addition, not routine content) — long revalidate window.
+// The list of exam levels almost never changes — adding a new one is a
+// rare, deliberate change, not routine ongoing content. So we're fine
+// caching this page for a whole hour at a time.
 export const revalidate = 3600;
 
 export default async function BrowsePage() {

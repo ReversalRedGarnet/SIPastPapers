@@ -7,19 +7,21 @@ import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 export const metadata: Metadata = {
   title: "Search",
   description: "Search past Solomon Islands national exam papers by keyword, exam level, year, or subject.",
-  // Filtered/query-string search results are near-duplicates of each other
-  // and of /browse's own listings -- indexing them adds noise without
-  // adding anything a crawler couldn't already find via the browse tree or
-  // an individual paper's own page. Standard practice for a site search
-  // results page (Google's own guidance recommends noindex here).
+  // We ask search engines not to index this search-results page.
+  // Filtered/keyword search results are near-duplicates of each other and
+  // of the browse pages' own listings, so indexing them would just add
+  // noise, without surfacing anything a search engine couldn't already
+  // find through the browse pages or an individual paper's own page.
+  // This matches standard advice for site-search results pages in general.
   robots: { index: false, follow: true },
 };
 
-// This route reads searchParams (q/series/year/subject/page/limit), which
-// Next.js always renders per-request regardless of a `revalidate` export --
-// so unlike the other public pages, this one can't be page-level ISR'd. The
-// underlying query is still cached at the data layer instead; see
-// searchPublicArtifactsPageCached in src/lib/db/queries.ts.
+// This page reads its filters straight out of the page's own URL (the
+// search text, exam level, year, subject, page number). Next.js always
+// treats a page like that as needing to render fresh every time — it
+// can't use the simple whole-page caching that other public pages use.
+// Instead, the caching happens one level down, on the database query
+// itself; see searchPublicArtifactsPageCached in src/lib/db/queries.ts.
 export const dynamic = "force-dynamic";
 
 interface ResultsPageProps {
@@ -33,8 +35,11 @@ interface ResultsPageProps {
   }>;
 }
 
-/** Builds a /results link preserving the current filters (and a custom
- * limit, if one was explicitly set) while switching to a different page. */
+/**
+ * Builds a link to the search results page that keeps the current filters
+ * (and any custom page size that was explicitly set) while switching to a
+ * different page number.
+ */
 function buildPageHref(
   filters: { q?: string; series?: string; year?: string; subject?: string; limit?: string },
   page: number
@@ -55,9 +60,9 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
   const pageParam = filters.page ? Number(filters.page) : undefined;
   const limitParam = filters.limit ? Number(filters.limit) : undefined;
 
-  // Three independent reads (the page's own paginated search, plus the
-  // three filter dropdowns' option lists) run concurrently -- none depends
-  // on another's result.
+  // These don't depend on each other (the page's own search results, plus
+  // the option lists for the three filter dropdowns), so we fetch them
+  // all at once instead of one after another.
   const [{ records, total, page, limit, totalPages }, examSeries, subjects, years] = await Promise.all([
     searchPublicArtifactsPageCached(filters, { page: pageParam, limit: limitParam }),
     listExamSeries(),
@@ -146,10 +151,11 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
           or <Link href="/browse">browse what&apos;s available</Link>.
         </p>
       ) : records.length === 0 ? (
-        // total > 0 but this specific page has nothing -- a page number
-        // past the last one (e.g. a stale/hand-edited ?page= link), not
-        // "no matches", so it gets its own message rather than the one
-        // above.
+        // There ARE matching results overall, but this specific page has
+        // none — meaning someone requested a page number past the last
+        // real page (e.g. an old bookmarked or hand-typed "?page=" link).
+        // That's different from "no matches at all", so it gets its own,
+        // more specific message.
         <p className="empty-state">
           That page doesn&apos;t exist.{" "}
           <Link href={buildPageHref(filters, 1)}>Go to the first page</Link>.

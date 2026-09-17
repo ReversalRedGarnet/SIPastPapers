@@ -37,14 +37,17 @@ export async function generateMetadata({ params }: YearPageProps): Promise<Metad
   };
 }
 
-// Subjects available for a series/year only change as papers get published
-// for that instance -- infrequent, batch-driven.
+// The subjects available for a given exam series and year only change as
+// new papers get published for that combination — occasional, not
+// continuous — so a 15-minute cache works fine here.
 export const revalidate = 900;
 
-// Required for `revalidate` to actually enable ISR on a dynamic segment --
-// see the same note in src/app/browse/[series]/page.tsx. Cardinality is
-// still small (series x the fixed browse year range), so prerendering all
-// combinations is cheap.
+// This is required to make the caching above actually take effect on a
+// page whose web address has variable parts in it (exam series and year)
+// — same reason as in src/app/browse/[series]/page.tsx. There are still
+// only a small number of possible combinations (a few exam series × the
+// fixed set of browse years), so pre-building all of them ahead of time
+// is cheap.
 export async function generateStaticParams() {
   const examSeries = await listExamSeries();
   const years = listBrowseYears();
@@ -63,8 +66,8 @@ export default async function YearPage({ params }: YearPageProps) {
   if (!context) notFound();
   const { examSeries, series, years, year } = context;
 
-  // Three independent reads -- none depends on another's result -- run
-  // concurrently instead of as three sequential round trips to Neon.
+  // These three don't depend on each other, so we fetch them all at once
+  // instead of one after another.
   const [subjects, availability, publishedFiles] = await Promise.all([
     listPublicSubjectsForInstance(seriesCode, year),
     getExamContentAvailability(),

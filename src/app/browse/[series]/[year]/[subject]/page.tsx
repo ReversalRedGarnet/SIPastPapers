@@ -15,9 +15,9 @@ interface SubjectPageProps {
 async function loadContext(seriesCode: string, yearParam: string, subjectSlug: string) {
   const year = Number(yearParam);
   if (!Number.isInteger(year)) return undefined;
-  // listExamSeries/listSubjects don't depend on each other -- both are
-  // cross-referenced against the route params below, independently of one
-  // another -- so they run concurrently rather than series-then-subjects.
+  // These two don't depend on each other — each is separately checked
+  // against the page's web address below — so we fetch them both at once
+  // instead of one after another.
   const [examSeries, allSubjects] = await Promise.all([listExamSeries(), listSubjects()]);
   const series = examSeries.find((s) => s.code === seriesCode);
   if (!series) return undefined;
@@ -39,16 +39,18 @@ export async function generateMetadata({ params }: SubjectPageProps): Promise<Me
   };
 }
 
-// The actual paper list for one series/year/subject -- shortest interval
-// of the browse tree since it's the page closest to "did a new paper just
-// get published."
+// This is the actual list of papers for one exam series/year/subject —
+// the page in the browse hierarchy closest to "did a new paper just get
+// published", so it gets the shortest cache time of any browse page.
 export const revalidate = 300;
 
-// Required for `revalidate` to actually enable ISR on a dynamic segment --
-// see the same note in src/app/browse/[series]/page.tsx. series x the fixed
-// browse year range x subjects is still small (a few hundred combinations),
-// so prerendering all of them is cheap; combos with no published papers yet
-// just prerender to the existing empty-state UI.
+// This is required to make the caching above actually take effect on a
+// page whose web address has variable parts in it (exam series, year,
+// and subject) — same reason as in src/app/browse/[series]/page.tsx.
+// Multiplying series × years × subjects still only comes to a few hundred
+// combinations, so pre-building all of them ahead of time is cheap — and
+// a combination with no published papers yet simply shows the normal
+// "nothing here" message.
 export async function generateStaticParams() {
   const examSeries = await listExamSeries();
   const subjects = await listSubjects();
@@ -70,8 +72,8 @@ export default async function SubjectPage({ params }: SubjectPageProps) {
   if (!context) notFound();
   const { examSeries, series, years, year, subject } = context;
 
-  // Two independent reads -- neither depends on the other's result -- run
-  // concurrently instead of as two sequential round trips to Neon.
+  // These two don't depend on each other, so we fetch them both at once
+  // instead of one after another.
   const [papers, availability] = await Promise.all([
     searchPublicArtifacts({ series: seriesCode, year: String(year), subject: subjectSlug }),
     getExamContentAvailability(),
