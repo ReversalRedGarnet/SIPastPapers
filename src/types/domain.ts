@@ -1,9 +1,11 @@
 /**
- * Domain types mirroring the relational schema in PROJECT_SPEC.md section 4.2
- * (see migrations/0001_init.sql for the actual Postgres schema). Only the
- * subset src/lib/db/queries.ts and the UI actually pass around by these
- * names is kept here — the query layer otherwise shapes rows with its own
- * per-query Row interfaces, not a full one-type-per-table mirror.
+ * These are the shared shapes/types used to describe an exam paper and
+ * everything connected to it, matching the database tables in
+ * migrations/0001_init.sql. Only the specific fields that the database
+ * layer (src/lib/db/queries.ts) and the rest of the app actually pass
+ * around by these names are kept here — individual database queries often
+ * define their own smaller, more specific shapes instead of reusing a
+ * single type per database table.
  */
 
 export type UUID = string;
@@ -29,10 +31,9 @@ export interface Subject {
 // --- artifacts ---------------------------------------------------------
 
 /**
- * Controlled vocabularies below are not yet formalized in the spec
- * (section 4.3 is "to be defined"). These are a starting point derived from
- * language used elsewhere in the spec (Appendix A, sections 6.3, 8.3, 8.5)
- * and should be treated as provisional, not authoritative.
+ * The lists of allowed values below aren't officially finalized yet — this
+ * is a starting point based on how these are described elsewhere in the
+ * project spec, and should be treated as a draft, not the final word.
  */
 export type ArtifactType =
   | "question_paper"
@@ -59,9 +60,10 @@ export type VerificationStatus =
 export type RightsStatus =
   | "unknown"
   | "pending"
-  // Auto-assigned to every new artifact's rights record on creation (see
-  // src/lib/db/queries.ts ingestArtifact) so nothing can reach
-  // "published" without an explicit later rights decision (see approveRights).
+  // Automatically assigned to every new paper's rights record when it's
+  // first added (see ingestArtifact in src/lib/db/queries.ts), so that a
+  // paper can never become published without someone explicitly making a
+  // rights decision on it later (see approveRights).
   | "pending_institutional_approval"
   | "permission_granted"
   | "public_domain_or_expired"
@@ -90,12 +92,13 @@ export interface Source {
 // --- Denormalized read shapes for the public UI -----------------------------
 
 /**
- * A flattened, UI-friendly view of an artifact and its joined records —
- * shaped like Appendix A of PROJECT_SPEC.md. This is what search/results/
- * document pages actually render; produced by joining the tables above in
- * src/lib/db/queries.ts. Related artifacts (e.g. a marking scheme sharing
- * the same exam/subject) are returned alongside a record, not embedded in
- * it — see getPublicArtifactBySlug.
+ * A single, flattened, ready-for-display view of one exam paper, combining
+ * the details from several database tables into one convenient shape.
+ * This is what the search, results, and individual paper pages actually
+ * show — built by joining the underlying tables together in
+ * src/lib/db/queries.ts. Related papers (like a marking scheme belonging
+ * to the same exam and subject) are returned as a separate list alongside
+ * this record, not nested inside it — see getPublicArtifactBySlug.
  */
 export interface PublicExamRecord {
   id: UUID;

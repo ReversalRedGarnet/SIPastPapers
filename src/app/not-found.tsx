@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-// Root app/not-found.tsx handles both an explicit notFound() call from any
-// route segment and any URL that doesn't match a route at all -- no need
-// for the separate (experimental) global-not-found.js convention. It
-// renders inside the root layout, so the site header/nav/footer already
-// wrap this automatically.
+// This one file automatically handles both cases where a "page not found"
+// message needs to show up: when code somewhere deliberately says "this
+// doesn't exist", and when someone visits a web address that doesn't
+// match any page at all. It shows up inside the site's normal layout, so
+// the header, nav, and footer already appear around it automatically.
 export const metadata: Metadata = {
   title: "Page not found",
   description: "This page doesn't exist. Search or browse the SI National Exam Archive instead.",

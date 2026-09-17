@@ -2,23 +2,23 @@ import { randomUUID } from "node:crypto";
 import type { QueryResultRow } from "pg";
 
 /**
- * Reference/taxonomy scaffolding ONLY — exam series names, subject names,
- * and (series, year) slots that a coverage matrix needs to have something
- * to show gaps against (spec section 11.3, section 13.1 step 1). This is
- * NOT exam content: no artifacts, no files, no papers, no rights records.
- * Nothing here should be read as a confirmed historical record — the spec
- * itself flags the exact taxonomy as "subject to confirmation" (scope
- * baseline, section 0).
+ * This only sets up basic reference data — the names of the exam series
+ * and subjects, and empty "slots" for each (exam series, year) combination
+ * so the coverage matrix has something to compare against. It does NOT add
+ * any actual exam content: no papers, no files, no rights records.
  *
- * The year range below (2018–2024) is a placeholder scaffold for local
- * development, not a confirmed curriculum year list. Real coverage-matrix
- * construction happens later per spec section 13.1.
+ * Nothing here should be treated as a confirmed, official record — this
+ * list of exam series and subjects is still subject to being confirmed
+ * later.
  *
- * Called once by scripts/db-migrate.ts (npm run db:migrate) — not run on
- * every app/CLI startup the way the old sqlite version was, since
- * re-running the existence checks below on every serverless cold start
- * would be wasted work at best and a duplicate-key race at worst if two
- * cold starts both see an empty table. See migrations/README.md.
+ * The year range below (2018–2024) is just a placeholder set of years for
+ * local development, not an official list of exam years.
+ *
+ * This only runs once, when someone runs `npm run db:migrate` — not every
+ * time the app starts up. That's on purpose: running these checks on
+ * every single app startup would be wasted effort at best, and could cause
+ * a "duplicate data" error at worst if two startups happened at the same
+ * moment and both saw an empty table.
  */
 
 const EXAM_SERIES = [
@@ -37,9 +37,11 @@ const SUBJECTS = [
 const SCAFFOLD_YEARS = [2018, 2019, 2020, 2021, 2022, 2023, 2024];
 
 /**
- * Minimal shape both `pg.Client` and `pg.PoolClient` satisfy — decoupled
- * from src/lib/db/client.ts's pool/transaction machinery so this can run
- * standalone from scripts/db-migrate.ts against the unpooled connection.
+ * Describes the minimum shape a database connection needs to have to be
+ * used here — just something with a `query` method. This is kept separate
+ * from the connection-pool logic in src/lib/db/client.ts so this file can
+ * also be run on its own from the migration script, using a plain,
+ * unpooled connection.
  */
 export interface QueryRunner {
   query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<{ rows: T[] }>;

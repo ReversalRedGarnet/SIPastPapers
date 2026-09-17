@@ -1,9 +1,11 @@
-// /results reads searchParams and is force-dynamic (see page.tsx), so it
-// can't be statically prefetched -- without this file, clicking "Search"
-// in the nav had nothing to show until the full page (results query +
-// filter option lists) finished resolving, which read as the click doing
-// nothing. This file is Next's Suspense-fallback convention: it renders
-// immediately on navigation and is swapped for the real page once ready.
+// The search results page always has to render fresh (see the note in
+// page.tsx), so it can't be preloaded ahead of time. Without this file,
+// clicking "Search" in the nav would show nothing at all until the whole
+// page (search results plus all the filter dropdown options) finished
+// loading — which made the click feel like it wasn't doing anything. This
+// file is a built-in Next.js convention: it shows up immediately the
+// moment someone navigates here, then gets swapped out for the real page
+// once it's ready.
 export default function Loading() {
   return (
     <>

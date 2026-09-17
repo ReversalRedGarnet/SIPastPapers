@@ -63,12 +63,14 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
   const typeLabel = artifactListLabel(record.artifactType, record.paperNumber);
   const seriesLabel = seriesDisplayLabel(record.examSeriesCode);
 
-  // Only emit structured data when there's an actual document to describe --
-  // a 'not_yet_recovered' placeholder has no file, so asserting a
-  // DigitalDocument exists for it would be describing something that isn't
-  // there. Deliberately doesn't name MEHRD/an official publisher anywhere:
-  // this only claims what the About page already claims (see
-  // src/app/about/page.tsx's "Ownership and independence" section).
+  // We only add this structured data (used by search engines to build
+  // rich search results) when there's an actual file to describe. A paper
+  // that's just marked "not yet recovered" has no real document, so
+  // claiming a downloadable file exists for it would be describing
+  // something that isn't actually there. This deliberately doesn't name
+  // any official publisher or authority anywhere — it only claims what's
+  // already stated on the About page's "Ownership and independence"
+  // section.
   const jsonLd = record.file
     ? {
         "@context": "https://schema.org",

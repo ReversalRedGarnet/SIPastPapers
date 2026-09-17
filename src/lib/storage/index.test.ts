@@ -1,15 +1,17 @@
 /**
- * Covers getStorageProvider()'s backend switch (STORAGE_BACKEND=local|r2)
- * failing loudly on misconfiguration, rather than silently falling back
- * to local storage or a half-configured R2 client. Only the two
- * non-caching (throwing) paths are tested here: getStorageProvider()
- * caches its instance in a module-level singleton on the first
- * *successful* call, so — unlike R2Storage's own tests in r2.test.ts,
- * which construct instances directly — this file can't also assert
- * "defaults to local" and "builds an R2Storage" side by side in one
- * process without that first success locking in for every later call.
- * The default-to-local behavior is exercised implicitly by every test in
- * queries.test.ts and cli-lib.test.ts, which never set STORAGE_BACKEND.
+ * Tests that getStorageProvider() (which picks which storage system to
+ * use) fails clearly and loudly when misconfigured, instead of silently
+ * falling back to local storage or building a broken cloud-storage
+ * connection.
+ *
+ * This only tests the two failure cases. getStorageProvider() remembers
+ * the storage system it picked after the first successful call, so unlike
+ * r2.test.ts (which builds R2Storage instances directly), this file can't
+ * test "defaults to local storage" and "builds a working cloud connection"
+ * side by side in the same run — the first success would lock in for
+ * every test after it. The "defaults to local storage" behavior is already
+ * indirectly tested by every test in queries.test.ts and cli-lib.test.ts,
+ * none of which set STORAGE_BACKEND themselves.
  */
 
 import { test } from "node:test";

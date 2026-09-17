@@ -2,15 +2,18 @@ import Link from "next/link";
 import { listExamSeries, listRecentPublicArtifacts, listSubjects, listYears } from "@/lib/db/queries";
 import { seriesDisplayLabel } from "@/lib/format";
 
-// Exam content changes only when the operator publishes/unpublishes via
-// the CLI (bursty, not continuous) — ISR with a 5-minute revalidate window
-// means most visitors hit a cached page instead of a live DB round trip,
-// at the cost of up to ~5 minutes' staleness after a fresh publish.
+// The list of papers only changes when the operator publishes or
+// unpublishes something using the command-line tool — it doesn't change
+// continuously. So we cache this page for 5 minutes at a time. That means
+// most visitors get a fast, cached version of the page instead of a fresh
+// database read every time, at the cost of the page possibly being up to
+// 5 minutes out of date right after something new gets published.
 export const revalidate = 300;
 
 export default async function HomePage() {
-  // Four independent reads -- none depends on another's result -- so they
-  // run concurrently instead of as four sequential round trips to Neon.
+  // These four pieces of data don't depend on each other, so we fetch
+  // them all at the same time instead of one after another — which means
+  // this page loads about four times faster than it otherwise would.
   const [examSeries, subjects, years, recent] = await Promise.all([
     listExamSeries(),
     listSubjects(),

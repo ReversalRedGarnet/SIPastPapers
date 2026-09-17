@@ -27,15 +27,20 @@ export async function generateMetadata({ params }: SeriesPageProps): Promise<Met
   };
 }
 
-// The year range itself is fixed (see listBrowseYears); what changes here
-// is which years have content, updated whenever the operator publishes via
-// the CLI -- infrequent, batch-driven.
+// The list of possible years itself never changes (see listBrowseYears).
+// What does change is which years actually have content, and that only
+// updates when the operator publishes something using the command-line
+// tool — which happens occasionally, not continuously. So a 15-minute
+// cache is fine here.
 export const revalidate = 900;
 
-// Required for `revalidate` to actually enable ISR on a dynamic segment --
-// without generateStaticParams, Next.js has no known param set to prerender
-// and the route stays fully dynamic regardless of `revalidate`. Cardinality
-// is tiny (a handful of exam series), so prerendering all of them is cheap.
+// This is required to make the caching above actually take effect for a
+// page whose web address has a variable part in it (the exam series
+// code). Without this, Next.js has no way of knowing in advance which
+// exam series pages exist, so it would always render this page completely
+// fresh every time, ignoring the cache setting above. There are only a
+// handful of exam series, so pre-building all of their pages ahead of
+// time is cheap and quick.
 export async function generateStaticParams() {
   const examSeries = await listExamSeries();
   return examSeries.map((s) => ({ series: s.code }));

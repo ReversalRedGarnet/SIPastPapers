@@ -6,9 +6,11 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      // /api/ covers file downloads and the zip-generating download-year
-      // route -- not documents in their own right, and crawling the latter
-      // would trigger a fresh zip build per hit for no indexing benefit.
+      // This tells search engines not to crawl our /api/ pages. Those
+      // aren't real pages meant to be indexed — they're things like file
+      // downloads and the "download whole year as a zip" feature. Letting
+      // a search engine crawl the zip-download route would make it
+      // rebuild a fresh zip file on every single crawl hit, for no benefit.
       disallow: "/api/",
     },
     sitemap: `${SITE_URL}/sitemap.xml`,

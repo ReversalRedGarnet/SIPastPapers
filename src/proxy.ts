@@ -2,18 +2,20 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 /**
- * Named `proxy.ts`, not `middleware.ts` -- Next.js 16 renamed the
- * middleware file convention to Proxy (functionality is identical, see
- * node_modules/next/dist/docs/.../file-conventions/proxy.md). This file is
- * scoped by `matcher` below to exactly one route.
+ * This file is called `proxy.ts` rather than the older `middleware.ts` —
+ * that's just what this newer version of Next.js calls the same feature
+ * (it works exactly the same way). The `matcher` setting at the bottom of
+ * this file limits it to just one specific web address.
  *
- * IP-based rate limit for /api/download-year/[series]/[year]: no auth, and
- * each request drives real zlib compression plus a storage read per file in
- * that year, over a small, fully enumerable URL space (3 series x a fixed
- * year range -- see src/lib/browse-years.ts). This bounds request volume
- * from one source; it does not replace CDN/host-level protection against a
- * distributed attack, and deliberately doesn't try to be one -- see the
- * in-memory tradeoffs below.
+ * This limits how often any one visitor can request a "download whole
+ * year as zip" file. That download isn't behind a login, and each request
+ * does real work (compressing files, reading them from storage) across a
+ * small, easy-to-guess set of possible web addresses (just a few exam
+ * series × a fixed range of years). This only limits requests from one
+ * source at a time — it isn't meant to, and can't, protect against a
+ * large, distributed attack from many different sources at once. That
+ * kind of protection would need to happen at the hosting/CDN level
+ * instead.
  */
 
 const WINDOW_MS = 60_000;
@@ -25,20 +27,23 @@ interface Bucket {
 }
 
 /**
- * In-memory only: resets on cold start/redeploy and isn't shared across
- * serverless instances or regions, so the real-world limit is "per warm
- * instance" rather than a hard global cap. That's an appropriate match for
- * this route's actual threat model (a script hammering the endpoint from
- * one place) without pulling in an external store (Redis/Upstash) that
- * this low-traffic site doesn't otherwise need.
+ * This tracking is only kept in memory (not in a database), so it resets
+ * whenever the app restarts or redeploys, and isn't shared between
+ * different running copies of the app. In practice that means the limit
+ * applies "per running copy of the app", not as one single hard global
+ * limit. That's an acceptable trade-off for what we're actually trying to
+ * prevent here (one source hammering this one endpoint), without needing
+ * to add an external service (like Redis) that this small, low-traffic
+ * site doesn't otherwise need.
  */
 const buckets = new Map<string, Bucket>();
 
 /**
- * Unbounded map growth guard: a distinct IP that hits once and never
- * returns would otherwise leave a stale entry forever. Sweep opportunistically
- * once the map gets large, rather than on a timer (proxy has no persistent
- * background scheduler to hang one off).
+ * Prevents this tracking list from growing forever. Without this, a
+ * visitor who shows up once and never comes back would leave a leftover
+ * entry sitting in memory permanently. Instead, we clean out old entries
+ * once the list gets large enough, rather than running a cleanup on a
+ * timer (this file has no way to run a background task on a schedule).
  */
 const SWEEP_THRESHOLD = 1000;
 
@@ -50,10 +55,11 @@ function sweepExpired(now: number): void {
 }
 
 function clientIp(request: NextRequest): string {
-  // Vercel (and most proxies) set this; there's no other reliable way to
-  // get the caller's address from a NextRequest. Falls back to a single
-  // shared bucket for local/self-hosted setups that don't set it -- not a
-  // real limit in that case, but not a crash either.
+  // Our hosting platform (and most others) provides the visitor's address
+  // in this header — there's no other reliable way to get it. If it's
+  // missing (e.g. running locally), we fall back to treating every
+  // visitor as one shared "unknown" visitor — the rate limit won't work
+  // properly in that case, but at least it won't crash.
   const forwarded = request.headers.get("x-forwarded-for");
   return forwarded ? forwarded.split(",")[0].trim() : "unknown";
 }

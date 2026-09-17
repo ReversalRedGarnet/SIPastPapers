@@ -9,23 +9,24 @@ import { generateDownloadFilename, sanitizeForFilename } from "@/lib/artifact-na
 import { seriesDisplayLabel } from "@/lib/format";
 
 /**
- * At most this many files are being read from storage at once. archiver
- * still writes zip entries strictly in append order regardless (one
- * source stream fully drained before the next starts), so this doesn't
- * buy read/write parallelism -- what it bounds is how many R2 GetObject
- * requests/open connections can be outstanding at once for a large year,
- * instead of firing every file's request simultaneously.
+ * The most files we'll read from storage at the same time. The zip
+ * builder always writes its entries in a fixed order regardless (fully
+ * finishing one file before starting the next), so this setting doesn't
+ * actually make the reading or writing faster. What it does do is limit
+ * how many storage requests can be open at once for a year with lots of
+ * files, instead of firing off a request for every single file all at once.
  */
 const READ_CONCURRENCY = 4;
 
 /**
- * Streams one file from storage straight into the archive and resolves
- * once archiver has fully drained it (not merely queued it) -- that's
- * what makes the p-limit slot above a meaningful cap on open streams
- * rather than one that frees the instant `.append()` returns. Returns
- * normally without appending anything if the file is missing from
- * storage (DB/storage drift) -- logged and skipped, not a fatal error,
- * matching this route's original buffered version.
+ * Streams one file from storage directly into the zip archive, and only
+ * finishes once the file has been fully read into the archive (not just
+ * queued up to be read) — that's what makes the concurrency limit above
+ * actually meaningful, rather than something that frees up again the
+ * instant a file is merely queued. If the file has somehow gone missing
+ * from storage (a mismatch between the database and storage), this simply
+ * skips it and logs a warning, rather than treating it as a fatal error —
+ * matching how the earlier version of this feature behaved.
  */
 async function appendFile(storage: StorageProvider, archive: ZipArchive, file: DownloadableYearFile): Promise<void> {
   const stream = await storage.getStream(file.storageKey);
@@ -38,14 +39,15 @@ async function appendFile(storage: StorageProvider, archive: ZipArchive, file: D
 }
 
 /**
- * Bundles every published artifact for one (series, year) into a single
- * zip, for the "Download all" button on the year browse page. Runs on the
- * default Node.js runtime (zip generation needs Node; Edge can't do this).
+ * Bundles up every published exam paper for one exam series and year into
+ * a single zip file, for the "Download all" button on the year browse
+ * page. This needs to run on a regular Node.js server (not the lighter
+ * "Edge" runtime), since building a zip file requires Node's tools.
  *
- * Each file streams from storage straight into its zip entry -- neither
- * a single file nor the zip's own compressed output is ever buffered
- * whole in memory. `ZipArchive` is a `stream.Transform`, so its bytes
- * flow straight into the HTTP response as archiver produces them.
+ * Each file streams straight from storage into its spot in the zip — at
+ * no point is an entire file, or the whole finished zip, held all at once
+ * in memory. The zip data flows directly into the response as it's
+ * produced.
  */
 export async function GET(
   _request: Request,
@@ -64,14 +66,17 @@ export async function GET(
 
   const storage = getStorageProvider();
 
-  // Confirmed before the response below is ever constructed, not after:
-  // once that streaming response starts, its status/headers are already
-  // committed to the client, so there is no way to retroactively turn a
-  // 200 into an error after discovering mid-stream that nothing got
-  // appended. Without this check, every file for this series+year being
-  // missing from storage while the DB still has published rows (real
-  // DB/storage drift, not a normal "no papers yet" state) would produce a
-  // 200 response with a valid but zero-entry zip and no visible error.
+  // We check this BEFORE starting to build and send the response below —
+  // not after. Once that streaming response has started, its status code
+  // and headers are already locked in and sent to the visitor's browser,
+  // so there's no way to go back and turn a "success" response into an
+  // error after discovering partway through that nothing actually got
+  // added to the zip. Without this check, if every file for this exam
+  // series and year had somehow gone missing from storage while the
+  // database still listed them as published (a genuine mismatch between
+  // the database and storage — not the normal "no papers yet" situation),
+  // the visitor would get back what looks like a successful download, but
+  // is actually an empty, useless zip file, with no visible error at all.
   const existence = await Promise.all(files.map((file) => storage.exists(file.storageKey)));
   const availableFiles = files.filter((_, i) => existence[i]);
   if (availableFiles.length === 0) {
@@ -86,12 +91,13 @@ export async function GET(
 
   const archive = new ZipArchive({ zlib: { level: 6 } });
 
-  // A file-level error (a real storage failure, not the soft "missing"
-  // case handled inside appendFile) aborts the whole zip rather than
-  // producing a silently truncated one -- destroying `archive` here
-  // propagates as an error on the response stream, which ends the
-  // connection instead of completing it, so the client sees a failed
-  // download rather than a corrupt file that looks complete.
+  // A genuine storage failure while building the zip (not the "soft"
+  // missing-file case already handled inside appendFile above) cancels
+  // the whole download, rather than quietly producing a zip that looks
+  // complete but is secretly missing content. Deliberately failing the
+  // archive here makes the download connection end with an error, so the
+  // visitor sees a failed download rather than getting a corrupted file
+  // that appears fine.
   const archiveError = new Promise<never>((_, reject) => {
     archive.once("error", reject);
   });

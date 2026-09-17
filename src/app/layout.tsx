@@ -12,19 +12,21 @@ const DESCRIPTION =
   "A free archive of past Solomon Islands national examination papers. Search or browse SIF3/SIJSC, SISC Level 1 and SISC Level 2/SINF6 exam papers by year and subject.";
 
 export const metadata: Metadata = {
-  // Lets every route below use a relative path for URL-based metadata
-  // fields (openGraph.url, alternates.canonical) instead of requiring a
-  // full https://... string everywhere.
+  // Setting this here means every other page can use a short, relative
+  // path for its own link-related metadata (like the "shareable link"
+  // preview info), instead of having to write out the full
+  // "https://..." address every single time.
   metadataBase: new URL(SITE_URL),
   title: {
     default: SITE_NAME,
     template: `%s — ${SITE_NAME}`,
   },
   description: DESCRIPTION,
-  // Route-level metadata that doesn't declare its own `openGraph` inherits
-  // this one wholesale (it's a full replace, not a merge, per Next's
-  // metadata resolution) -- so this is effectively the homepage's OG tags,
-  // and the fallback for any page that doesn't set its own.
+  // Any page that doesn't set its own social-media preview info
+  // (its "openGraph" details) uses this one instead — it's a full
+  // replacement, not a partial fill-in, if a page does set its own. So
+  // this effectively serves as both the homepage's preview info and the
+  // fallback for every other page.
   openGraph: {
     siteName: SITE_NAME,
     title: SITE_NAME,
