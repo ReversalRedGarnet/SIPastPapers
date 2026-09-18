@@ -8,14 +8,14 @@ import type { NextRequest } from "next/server";
  * this file limits it to just one specific web address.
  *
  * This limits how often any one visitor can request a "download whole
- * year as zip" file. That download isn't behind a login, and each request
- * does real work (compressing files, reading them from storage) across a
- * small, easy-to-guess set of possible web addresses (just a few exam
- * series × a fixed range of years). This only limits requests from one
- * source at a time — it isn't meant to, and can't, protect against a
- * large, distributed attack from many different sources at once. That
- * kind of protection would need to happen at the hosting/CDN level
- * instead.
+ * year as zip" file, or a single paper's file directly. Neither download
+ * is behind a login, and each request does real work (reading from
+ * storage, and for the zip route, compressing too) — direct file
+ * downloads also carry real storage egress cost as traffic grows. This
+ * only limits requests from one source at a time — it isn't meant to, and
+ * can't, protect against a large, distributed attack from many different
+ * sources at once. That kind of protection would need to happen at the
+ * hosting/CDN level instead.
  */
 
 // The underscore in `60_000` is just a readability separator (like a comma
@@ -99,5 +99,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: "/api/download-year/:series/:year",
+  matcher: ["/api/download-year/:series/:year", "/api/files/:fileId"],
 };

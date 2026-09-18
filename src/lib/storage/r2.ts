@@ -57,7 +57,6 @@ export class R2Storage implements StorageProvider {
   }
 
   async put(key: string, data: Buffer, contentType?: string): Promise<PutResult> {
-    console.log(`[r2] PUT bucket="${this.bucket}" key="${key}" bytes=${data.byteLength} contentType="${contentType ?? ""}"`);
     const response = await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
@@ -66,10 +65,11 @@ export class R2Storage implements StorageProvider {
         ContentType: contentType,
       })
     );
-    console.log(
-      `[r2] PUT response httpStatusCode=${response.$metadata?.httpStatusCode} requestId=${response.$metadata?.requestId} ` +
-        `ETag=${response.ETag} versionId=${response.VersionId}`
-    );
+    // One concise line per upload — bucket name is already logged once at
+    // startup (see getStorageProvider in src/lib/storage/index.ts), and
+    // the request id/ETag/version id are only ever useful when actively
+    // debugging a specific upload, not on every routine one.
+    console.log(`[r2] PUT key="${key}" bytes=${data.byteLength} httpStatusCode=${response.$metadata?.httpStatusCode}`);
     return { key, bytes: data.byteLength };
   }
 
