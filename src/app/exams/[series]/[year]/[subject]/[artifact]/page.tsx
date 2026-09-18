@@ -45,6 +45,12 @@ export async function generateMetadata({
   };
 }
 
+// This content only changes when the operator publishes/unpublishes
+// something via the command-line tool — occasional, not continuous — so
+// the same 5-minute cache tier as the subject-listing page (one level up
+// in the browse hierarchy) works fine here too.
+export const revalidate = 300;
+
 const ISSUE_TYPES = [
   { value: "wrong_metadata", label: "Wrong year, subject, or paper number" },
   { value: "missing_or_corrupt", label: "Pages missing or file won't open" },

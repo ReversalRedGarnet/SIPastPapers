@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
+import { isTransientConnectionError } from "@/lib/db/transient-error";
 
 // This is the page shown whenever something goes wrong loading any page on
 // the site. It has to run in the browser (rather than only on the
@@ -33,12 +34,15 @@ export default function Error({
     console.error(error);
   }, [error]);
 
+  const isColdDb = isTransientConnectionError(error);
+
   return (
     <>
       <h1>Something went wrong</h1>
       <p className="lede" style={{ marginBottom: "1.5rem" }}>
-        An unexpected error stopped this page from loading. It&apos;s been
-        logged. Try again, or head back to the homepage.
+        {isColdDb
+          ? "The database is waking up — please try again in a moment."
+          : "An unexpected error stopped this page from loading. It's been logged. Try again, or head back to the homepage."}
       </p>
 
       {error.digest && (

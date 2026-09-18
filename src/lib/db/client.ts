@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
+import { isTransientConnectionError } from "./transient-error";
 
 // `Pool | undefined` -- a union again (see src/types/domain.ts), this time
 // with `undefined` instead of `null`: this variable either holds a real
@@ -12,27 +13,12 @@ let pool: Pool | undefined;
 // resources when it hasn't been used in a while, and takes a moment to
 // wake back up. During that moment, trying to connect can briefly fail
 // even though nothing is actually wrong. So here we detect that specific
-// kind of failure and retry it automatically, rather than giving up right
-// away. We only retry connection problems like this — never a genuine
-// error in the data or the SQL itself, since retrying that would just fail
-// again in exactly the same way.
-const TRANSIENT_CONNECTION_ERROR_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE"]);
-
-// `unknown` means "this could be absolutely anything -- a caught error
-// could be a real Error, or a plain string, or something else entirely."
-// Unlike TypeScript's looser `any`, a value typed `unknown` can't be used
-// for much until its actual type is checked, which is exactly what the
-// `instanceof Error` check below does: "is this specific value actually an
-// Error object?"
-function isTransientConnectionError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const code = (err as NodeJS.ErrnoException).code;
-  if (code && TRANSIENT_CONNECTION_ERROR_CODES.has(code)) return true;
-  // These particular connection failures don't come with an error code
-  // (unlike the ones checked above), so we have to recognize them by their
-  // message text instead.
-  return /connection terminated/i.test(err.message);
-}
+// kind of failure (isTransientConnectionError, in ./transient-error) and
+// retry it automatically, rather than giving up right away. We only retry
+// connection problems like this — never a genuine error in the data or
+// the SQL itself, since retrying that would just fail again in exactly
+// the same way.
+export { isTransientConnectionError } from "./transient-error";
 
 const RETRY_BASE_DELAY_MS = 500;
 
@@ -55,7 +41,7 @@ interface RetryBudget {
 }
 
 const RETRY_BUDGETS: Record<"web" | "cli", RetryBudget> = {
-  web: { connectionTimeoutMillis: 5_000, retryAttempts: 1 },
+  web: { connectionTimeoutMillis: 9_000, retryAttempts: 2 },
   cli: { connectionTimeoutMillis: 15_000, retryAttempts: 3 },
 };
 
@@ -67,8 +53,7 @@ function getRetryBudget(): RetryBudget {
  * Runs the given function, and if it fails because of a dropped/never-made
  * connection, tries again after a short pause (waiting a bit longer each
  * time: 500ms, then 1000ms, and so on). Any other kind of failure is
- * passed straight through immediately, with no retry. In "web" mode
- * (retryAttempts = 1), this effectively never retries at all.
+ * passed straight through immediately, with no retry.
  */
 // The `<T>` here is a "generic": a placeholder type, filled in by whatever
 // this function is actually used with. `withRetry` needs to work for any
