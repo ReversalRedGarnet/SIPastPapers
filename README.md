@@ -6,7 +6,7 @@ as Year 11, SISC Level 2/SINF6 otherwise known as Year 12), built for
 public use.
 
 **Status:** Phase 3 — live at
-[si-past-papers.vercel.app](https://si-past-papers.vercel.app), with 291
+[sipastexams.com](https://sipastexams.com), with 291
 published papers across all three exam levels. Next.js app backed by a
 real Postgres (Neon) database and file storage (local filesystem by
 default for dev, Cloudflare R2 in production — see "What's implemented"
