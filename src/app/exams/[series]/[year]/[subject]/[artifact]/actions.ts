@@ -31,7 +31,15 @@ const VALID_ISSUE_TYPES = [
 // `Boolean(...)` convert to those other types elsewhere in this project.
 export async function reportIssueAction(formData: FormData): Promise<void> {
   const artifactId = String(formData.get("artifactId") ?? "").trim();
-  const returnTo = String(formData.get("returnTo") ?? "/");
+  // This is a Server Action, which (unlike the rendered form) can be
+  // POSTed to directly with any value -- so a submitted returnTo isn't
+  // trustworthy just because the form always sends a safe one. Only a
+  // same-site relative path (starting with "/", but not "//", which
+  // browsers treat as protocol-relative to an external host) is allowed
+  // through; anything else falls back to the homepage instead of letting
+  // this redirect somewhere off-site.
+  const returnToRaw = String(formData.get("returnTo") ?? "/");
+  const returnTo = returnToRaw.startsWith("/") && !returnToRaw.startsWith("//") ? returnToRaw : "/";
   const issueType = String(formData.get("issueType") ?? "other");
   const description = String(formData.get("description") ?? "").trim();
   // `||` (as opposed to `??`, used everywhere else in this project) also

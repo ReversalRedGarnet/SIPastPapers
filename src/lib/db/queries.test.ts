@@ -19,6 +19,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { query, withRolledBackTransaction, closePool } from "./client";
+import { artifactSlug } from "@/lib/artifact-naming";
 
 let queries: typeof import("@/lib/db/queries");
 let tmpStorageDir: string;
@@ -109,5 +110,43 @@ test("publish is still refused if only some rights fields are set", async () => 
     if ("missing" in result) {
       assert.deepEqual(result.missing, ["evidence_uri"]);
     }
+  });
+});
+
+// A freshly-ingested artifact starts out as 'pending_review' (see
+// ingestArtifact) and is never touched by publishArtifact in this test —
+// so this checks the read side of the same guarantee the two tests above
+// check on the write side: a paper that hasn't been published must be
+// completely invisible to every public-facing read path, not just
+// unreachable via the CLI's publish gate.
+test("a pending_review artifact is invisible to every public read path", async () => {
+  await withRolledBackTransaction(async () => {
+    const { artifactId } = await queries.ingestArtifact({
+      examSeriesCode: "sisc-l1",
+      year: 2020,
+      subjectSlug: "mathematics",
+      artifactType: "question_paper",
+      paperNo: "3",
+      file: { buffer: Buffer.from("%PDF-1.4\n%test3\n"), mime: "application/pdf" },
+    });
+
+    const [fileRow] = await query<{ id: string }>("select id from files where artifact_id = $1", [artifactId]);
+
+    const bySearch = await queries.searchPublicArtifacts({
+      series: "sisc-l1",
+      year: "2020",
+      subject: "mathematics",
+    });
+    assert.ok(
+      !bySearch.some((r) => r.id === artifactId),
+      "a pending_review artifact should not appear in public search results"
+    );
+
+    const slug = artifactSlug({ artifactType: "question_paper", paperNo: "3" });
+    const bySlug = await queries.getPublicArtifactBySlug("sisc-l1", 2020, "mathematics", slug);
+    assert.equal(bySlug, undefined, "a pending_review artifact should not be reachable by its public slug");
+
+    const download = await queries.getFileForDownload(fileRow.id);
+    assert.equal(download, undefined, "a pending_review artifact's file should not be downloadable");
   });
 });

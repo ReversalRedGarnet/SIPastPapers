@@ -45,6 +45,14 @@ here already exists — see `src/lib/db/queries.test.ts`).
 Never hand-edit a production table as a substitute for a new migration file
 (spec section 23).
 
+## Before merging a PR that adds a migration
+
+Vercel auto-deploys `main` on merge, but nothing here ties that deploy to
+whether a new migration has actually been applied to production yet.
+Before merging any PR that adds a new `migrations/*.sql` file, run `npm run
+db:migrate` against the production `DATABASE_URL` first, so the schema
+change lands before the code that depends on it deploys — not after.
+
 ## Notes
 
 - Controlled vocabularies (valid values for `type`, `status`,
