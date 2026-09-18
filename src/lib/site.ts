@@ -6,6 +6,6 @@
  * nothing is set, it defaults to the current deployment address, so local
  * and test builds still produce valid, working URLs.
  */
-export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://si-past-papers.vercel.app";
+export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sipastexams.com";
 
 export const SITE_NAME = "SI National Exam Archive";
