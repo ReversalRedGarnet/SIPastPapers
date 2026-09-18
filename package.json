@@ -9,7 +9,7 @@
     "lint": "eslint",
     "cli": "tsx scripts/cli.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
-    "test": "tsx --test scripts/cli-lib.test.ts src/lib/db/queries.test.ts src/lib/format.test.ts src/lib/storage/r2.test.ts src/lib/storage/local-fs.test.ts src/lib/storage/index.test.ts"
+    "test": "tsx --test scripts/cli-lib.test.ts src/proxy.test.ts src/lib/db/client.test.ts src/lib/db/queries.test.ts src/lib/format.test.ts src/lib/storage/r2.test.ts src/lib/storage/local-fs.test.ts src/lib/storage/index.test.ts src/app/api/files/route.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",

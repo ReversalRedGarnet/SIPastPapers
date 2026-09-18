@@ -61,7 +61,7 @@ function getRetryBudget(): RetryBudget {
 // of hard-coding one specific return type, `T` stands in for "whatever
 // type `fn` resolves to," and TypeScript fills it in automatically each
 // time this function is called.
-async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+export async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   const { retryAttempts } = getRetryBudget();
   let attempt = 0;
   // `for (;;)` with nothing in any of the three slots is a loop that never
