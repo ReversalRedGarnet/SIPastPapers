@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Analytics } from "@vercel/analytics/next";
 import { SiteNav } from "@/components/SiteNav";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
 // Importing a .css file directly, like this, is a Next.js-specific
@@ -84,6 +85,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             </nav>
           </div>
         </footer>
+        <Analytics />
       </body>
     </html>
   );
