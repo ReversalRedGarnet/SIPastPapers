@@ -34,9 +34,7 @@ The archive should make the provenance and status of every file visible. A visit
 - No attempt to obtain or publish unreleased current examinations.
 - No exam cheating service, answer-selling service, or paywalled study marketplace.
 - No account requirement for ordinary users.
-- No dependence on a single volunteer, school, or government staff member for system operation.
 - No commitment to host every historically created examination before the first release.
-- No automatic assumption that every Internet copy is authentic or legally redistributable.
 
 ## 2. Scope and corpus strategy
 
