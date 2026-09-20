@@ -14,7 +14,7 @@ import "@fontsource/public-sans/latin-700.css";
 import "./globals.css";
 
 const DESCRIPTION =
-  "A free archive of past Solomon Islands national examination papers. Search or browse SIF3/SIJSC, SISC Level 1 and SISC Level 2/SINF6 exam papers by year and subject.";
+  "SI Past Papers — a free archive of past Solomon Islands national examination papers (also known as SI Past Exams). Search or browse SIF3/SIJSC, SISC Level 1 and SISC Level 2/SINF6 exam papers by year and subject.";
 
 // Exporting a specifically-named constant called `metadata` is another
 // Next.js file convention (like the .css imports above): Next.js reads it
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   // "https://..." address every single time.
   metadataBase: new URL(SITE_URL),
   title: {
-    default: SITE_NAME,
+    default: "SI Past Papers | SI National Exam Archive",
     template: `%s — ${SITE_NAME}`,
   },
   description: DESCRIPTION,

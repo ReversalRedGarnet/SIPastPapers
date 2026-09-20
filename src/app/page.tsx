@@ -61,7 +61,8 @@ export default async function HomePage() {
         they&apos;ll actually sit. Browse by exam level, year, and subject,
         or search directly for a specific paper below. The archive is
         actively growing, not every past exam is available yet, but more
-        papers are being added as they&apos;re gathered and verified.
+        papers are being added as they&apos;re gathered and verified. Also
+        known as SI Past Papers or SI Past Exams.
       </p>
       <p className="hint" style={{ marginTop: "0.5rem" }}>
         Spotted a paper that&apos;s missing, wrong, or looks altered?{" "}
