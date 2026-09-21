@@ -603,7 +603,16 @@ export interface CoverageCell {
   year: number;
   subjectSlug: string;
   subjectName: string;
+  // The collapsed, across-all-types status -- same semantics as before this
+  // cell also tracked a `byType` breakdown, kept so a cell with only one
+  // artifact type still has a single obvious status to check.
   status: CoverageStatus;
+  // One entry per artifact type this subject has ever had ingested for it,
+  // anywhere in the archive (e.g. "listening_comprehension" only appears
+  // here for subjects that actually have listening papers, not every
+  // subject) -- so a published question paper can no longer hide a missing
+  // or not-yet-recovered marking scheme for the same cell.
+  byType: Array<{ type: ArtifactType; status: CoverageStatus }>;
 }
 
 export async function getCoverageMatrix(): Promise<CoverageCell[]> {
@@ -618,18 +627,38 @@ export async function getCoverageMatrix(): Promise<CoverageCell[]> {
     "select id, canonical_name, subject_code from subjects order by canonical_name"
   );
 
-  const artifactStatuses = await query<{
+  const artifacts = await query<{
     exam_instance_id: string;
     subject_id: string;
+    type: ArtifactType;
     status: ArtifactStatus;
-  }>("select exam_instance_id, subject_id, status from artifacts");
+  }>("select exam_instance_id, subject_id, type, status from artifacts");
+
+  // Every artifact type ever tracked for a given subject, across every
+  // series/year -- this is what limits each cell's `byType` breakdown to
+  // types that subject actually uses, instead of listing all six possible
+  // types (most of which would just always read "Missing") for every cell.
+  const typesBySubject = new Map<string, Set<ArtifactType>>();
+  for (const a of artifacts) {
+    const set = typesBySubject.get(a.subject_id) ?? new Set<ArtifactType>();
+    set.add(a.type);
+    typesBySubject.set(a.subject_id, set);
+  }
 
   const statusesByCell = new Map<string, ArtifactStatus[]>();
-  for (const a of artifactStatuses) {
+  const statusesByCellAndType = new Map<string, Map<ArtifactType, ArtifactStatus[]>>();
+  for (const a of artifacts) {
     const key = `${a.exam_instance_id}:${a.subject_id}`;
+
     const list = statusesByCell.get(key) ?? [];
     list.push(a.status);
     statusesByCell.set(key, list);
+
+    const byType = statusesByCellAndType.get(key) ?? new Map<ArtifactType, ArtifactStatus[]>();
+    const typeList = byType.get(a.type) ?? [];
+    typeList.push(a.status);
+    byType.set(a.type, typeList);
+    statusesByCellAndType.set(key, byType);
   }
 
   function deriveStatus(statuses: ArtifactStatus[] | undefined): CoverageStatus {
@@ -643,6 +672,24 @@ export async function getCoverageMatrix(): Promise<CoverageCell[]> {
   for (const instance of instances) {
     for (const subject of subjects) {
       const key = `${instance.id}:${subject.id}`;
+      const byTypeStatuses = statusesByCellAndType.get(key);
+      // Known limitation: this groups by `type` alone, not by `(type,
+      // paper_no)` -- so if a type has more than one paper_no variant in
+      // this cell (e.g. Industrial Arts' plain vs "cat" marking scheme,
+      // Design Technology's woodmetal vs foodclothing streams) and those
+      // variants ever end up with different statuses, deriveStatus below
+      // merges them into one status rather than surfacing the split. Same
+      // masking pattern as the collapsed-across-types bug this `byType`
+      // field was added to fix, just one level finer. Checked against
+      // live data when this was built: no cell currently has differing
+      // statuses across paper_no variants, so nothing is misrepresented
+      // today -- but worth knowing if a coverage cell ever looks wrong for
+      // a subject with multiple paper_no variants of the same type.
+      const byType = [...(typesBySubject.get(subject.id) ?? [])].map((type) => ({
+        type,
+        status: deriveStatus(byTypeStatuses?.get(type)),
+      }));
+
       cells.push({
         examSeriesCode: instance.series_code,
         examSeriesName: instance.series_name,
@@ -650,6 +697,7 @@ export async function getCoverageMatrix(): Promise<CoverageCell[]> {
         subjectSlug: subject.subject_code ?? subject.id,
         subjectName: subject.canonical_name,
         status: deriveStatus(statusesByCell.get(key)),
+        byType,
       });
     }
   }

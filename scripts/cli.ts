@@ -23,6 +23,7 @@ import {
   listAllArtifacts,
   publishArtifact,
   unpublishArtifact,
+  type CoverageCell,
   type CoverageStatus,
 } from "@/lib/db/queries";
 import { artifactTypeSlug } from "@/lib/artifact-naming";
@@ -479,6 +480,35 @@ const COVERAGE_LABEL: Record<CoverageStatus, string> = {
   not_yet_recovered: "Not yet recovered",
 };
 
+// Short codes for a cell's per-type breakdown (e.g. "QP:Published, MS:Not
+// yet recovered") -- kept short since a cell can list several of these
+// side by side.
+const ARTIFACT_TYPE_CODE: Record<ArtifactType, string> = {
+  question_paper: "QP",
+  marking_scheme: "MS",
+  examiner_report: "ER",
+  listening_comprehension: "LC",
+  practical_paper: "PP",
+  other: "OT",
+};
+
+// A subject that only ever tracks one artifact type (e.g. most subjects
+// only ever get question papers ingested) renders as a single collapsed
+// label, same as before this command was type-aware. A subject that tracks
+// more than one type (question paper + marking scheme, or + examiner
+// report/listening comprehension/practical paper) always shows the full
+// per-type breakdown -- even when every type currently agrees -- so a
+// cell's status can never quietly regress back to a single misleading
+// label if one of its types changes later.
+function renderCell(cell: CoverageCell): string {
+  if (cell.byType.length <= 1) {
+    return COVERAGE_LABEL[cell.status];
+  }
+  return cell.byType
+    .map(({ type, status }) => `${ARTIFACT_TYPE_CODE[type]}:${COVERAGE_LABEL[status]}`)
+    .join(", ");
+}
+
 async function runCoverage(): Promise<void> {
   const cells = await getCoverageMatrix();
   if (cells.length === 0) {
@@ -502,9 +532,17 @@ async function runCoverage(): Promise<void> {
   for (const series of seriesList) {
     console.log(`\n${series.name}`);
 
-    const colWidths = subjects.map((s) =>
-      Math.max(s.name.length, ...Object.values(COVERAGE_LABEL).map((l) => l.length))
-    );
+    // Column width now depends on the actual rendered text (which can be a
+    // multi-type breakdown, not just one of the four fixed labels), so it's
+    // measured from every real cell in the column rather than from
+    // COVERAGE_LABEL alone.
+    const colWidths = subjects.map((subject, i) => {
+      const rendered = years.map((year) => {
+        const cell = cellFor(series.code, year, subject.slug);
+        return cell ? renderCell(cell) : COVERAGE_LABEL.missing;
+      });
+      return Math.max(subject.name.length, ...rendered.map((r) => r.length));
+    });
     const yearColWidth = Math.max(4, String(Math.max(...years)).length);
 
     const header = ["Year".padEnd(yearColWidth), ...subjects.map((s, i) => s.name.padEnd(colWidths[i]))].join("  | ");
@@ -516,8 +554,8 @@ async function runCoverage(): Promise<void> {
         String(year).padEnd(yearColWidth),
         ...subjects.map((subject, i) => {
           const cell = cellFor(series.code, year, subject.slug);
-          const status = cell?.status ?? "missing";
-          return COVERAGE_LABEL[status].padEnd(colWidths[i]);
+          const text = cell ? renderCell(cell) : COVERAGE_LABEL.missing;
+          return text.padEnd(colWidths[i]);
         }),
       ].join("  | ");
       console.log(row);

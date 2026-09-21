@@ -683,13 +683,18 @@ The project owner should control the GitHub organization/repository, primary dom
   question papers + 8 English listening comprehension papers). Rights
   basis: `teacher-verified` for all 40 — personal network of SI teachers,
   education officers and former students, not an institutional/MEHRD
-  approval (see 11.2's caveat on `--approved-by`). Marking
-  schemes/solutions deliberately not ingested for any year: current
-  teaching increasingly leans on AI/online resources, so a marking
-  scheme's phrasing may no longer reliably match how a repeated question
-  is taught today even when the question itself is unchanged — revisit
-  once that verification concern is resolved. 2015, 2024, and 2025 not
-  yet ingested (papers not yet acquired for those years).
+  approval (see 11.2's caveat on `--approved-by`). Marking schemes not
+  ingested as part of this batch (see 2026-09-21 entry below for the
+  current policy). 2015, 2024, and 2025 not yet ingested (papers not yet
+  acquired for those years).
+- **2026-09-21 — Marking-scheme ingestion now permitted, superseding
+  the 2026-09-14 decision above.** That decision held marking schemes
+  back because a scheme's phrasing might no longer reliably match how a
+  repeated question is taught today. The verification concern is
+  resolved for the SISC L1 (Year 11) and L2/SINF6 (Year 12) marking
+  schemes now being organized for ingest — they are newly-verified.
+  Marking schemes for other series/years remain subject to the same
+  verification bar before ingestion.
 
 ### 14.3 Documentation set
 
