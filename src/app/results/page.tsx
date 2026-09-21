@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { listExamSeries, listSubjects, listYears, searchPublicArtifactsPageCached } from "@/lib/db/queries";
+import { artifactTypeLabel, paperVariantLabel } from "@/lib/artifact-naming";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
 import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 
@@ -202,6 +203,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                 <tr>
                   <th scope="col">Year</th>
                   <th scope="col">Subject</th>
+                  <th scope="col">Type</th>
                   <th scope="col">Exam level</th>
                   <th scope="col">
                     <span className="visually-hidden">Actions</span>
@@ -217,10 +219,15 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                     that uses it. */}
                 {records.map((r) => {
                   const href = `/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`;
+                  const variant = paperVariantLabel(r.paperNumber);
+                  const typeLabel = variant
+                    ? `${artifactTypeLabel(r.artifactType)} (${variant})`
+                    : artifactTypeLabel(r.artifactType);
                   return (
                     <tr key={r.id}>
                       <td data-label="Year">{r.year}</td>
                       <td data-label="Subject">{r.subject}</td>
+                      <td data-label="Type">{typeLabel}</td>
                       <td data-label="Exam level">{seriesDisplayLabel(r.examSeriesCode)}</td>
                       <td>
                         <Link href={href}>View</Link>

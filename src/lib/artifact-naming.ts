@@ -47,6 +47,30 @@ export function artifactTypeSlug(type: ArtifactType): string {
 }
 
 /**
+ * Explicit, sitewide display labels for the handful of paper_no values
+ * that don't read as a plain "paper number" -- currently just Design
+ * Technology's two exam streams (a student sits one or the other, not a
+ * numbered sequence of papers). This is deliberately a fixed lookup, not
+ * a generic word-transform (e.g. capitalizing/splitting the raw code),
+ * so it can never accidentally reformat an unrelated paper_no like "1"
+ * or "cat" that happens to pass through the same code path.
+ */
+const PAPER_NO_DISPLAY_LABEL: Record<string, string> = {
+  foodclothing: "Food & Nutrition",
+  woodmetal: "Wood/Metal",
+};
+
+/**
+ * The explicit display label for a paper_no value, or null if it isn't
+ * one of the known special cases above (e.g. a plain paper number like
+ * "1", which callers handle their own way).
+ */
+export function paperNoDisplayLabel(paperNo: string | null): string | null {
+  if (!paperNo) return null;
+  return PAPER_NO_DISPLAY_LABEL[paperNo] ?? null;
+}
+
+/**
  * The label shown for one exam paper in a list or breadcrumb. Question
  * papers are shown as "Examination Booklet", with the paper number added
  * on the end if there's more than one for that subject and year (e.g.
@@ -59,12 +83,15 @@ export function artifactTypeSlug(type: ArtifactType): string {
 // `paperNo` to handle the "there isn't one" case, instead of assuming
 // there's always a value and crashing when there isn't.
 export function artifactListLabel(type: ArtifactType, paperNo: string | null): string {
+  const streamLabel = paperNoDisplayLabel(paperNo);
   if (type === "question_paper") {
     // `condition ? valueIfTrue : valueIfFalse` is a "ternary" -- a compact
     // one-line if/else. Here: if there's a paper number, use the first
     // string; otherwise use the second.
+    if (streamLabel) return `Examination Booklet (${streamLabel})`;
     return paperNo ? `Examination Booklet ${paperNo}` : "Examination Booklet";
   }
+  if (streamLabel) return `${artifactTypeLabel(type)} (${streamLabel})`;
   return artifactTypeLabel(type);
 }
 
@@ -110,22 +137,20 @@ const PRACTICAL_PAPER_SUFFIXES: Record<string, string> = {
 };
 
 /**
- * Design Technology has two separate full papers that a student takes one
- * or the other of (a "wood/metal" stream and a "food/clothing" stream).
- * These get their own clean, descriptive title ending instead of the
- * generic "Paper <number>" pattern.
- *
- * This lookup is keyed on the combination of artifact type + paper number
- * together, not just the subject name, so it can never accidentally clash
- * with the Industrial Arts suffixes above — those only ever apply to
- * practical papers, while this only ever applies to question papers, so
- * the same paper-number text used in each case can never be confused with
- * the other.
+ * A short "(variant)" label for the /results search table, so two rows
+ * that share the same year/subject/type but differ only by paper_no
+ * (Design Technology's two streams, Industrial Arts' CAT vs drawing-sheet
+ * practical paper) don't render as identical text. Checks the explicit
+ * maps above first, then falls back to a plain "Paper <number>" for
+ * anything else (e.g. a numbered paper like "1"). Unlike
+ * {@link paperNoDisplayLabel}, that fallback IS a generic transform — but
+ * it's scoped to this one function, used only for this one table, never
+ * for a paper's own title or its type-specific list label.
  */
-const QUESTION_PAPER_STREAM_SUFFIXES: Record<string, string> = {
-  woodmetal: "Design Technology (Wood/Metal)",
-  foodclothing: "Design Technology (Food/Clothing)",
-};
+export function paperVariantLabel(paperNo: string | null): string | null {
+  if (!paperNo) return null;
+  return PAPER_NO_DISPLAY_LABEL[paperNo] ?? PRACTICAL_PAPER_SUFFIXES[paperNo] ?? `Paper ${paperNo}`;
+}
 
 /**
  * Builds a paper's display title consistently, always in this format:
@@ -143,11 +168,12 @@ export function generateArtifactTitle(params: {
   // named fields out of `params` and creates a separate variable for each,
   // matched up by name.
   const { examSeriesName, subjectName, year, artifactType, paperNo } = params;
+  const streamLabel = paperNoDisplayLabel(paperNo);
   let suffix: string;
   if (artifactType === "practical_paper" && paperNo && PRACTICAL_PAPER_SUFFIXES[paperNo]) {
     suffix = PRACTICAL_PAPER_SUFFIXES[paperNo];
-  } else if (artifactType === "question_paper" && paperNo && QUESTION_PAPER_STREAM_SUFFIXES[paperNo]) {
-    suffix = QUESTION_PAPER_STREAM_SUFFIXES[paperNo];
+  } else if (streamLabel) {
+    suffix = artifactType === "question_paper" ? streamLabel : `${streamLabel} ${artifactTypeLabel(artifactType)}`;
   } else if (!paperNo) {
     suffix = artifactTypeLabel(artifactType);
   } else if (artifactType === "question_paper") {

@@ -3,6 +3,7 @@
 // slower browser page reload.
 import Link from "next/link";
 import { listExamSeries, listRecentPublicArtifacts, listSubjects, listYears } from "@/lib/db/queries";
+import { artifactTypeLabel, paperVariantLabel } from "@/lib/artifact-naming";
 import { seriesDisplayLabel } from "@/lib/format";
 
 // The list of papers only changes when the operator publishes or
@@ -174,6 +175,7 @@ export default async function HomePage() {
                 <tr>
                   <th scope="col">Year</th>
                   <th scope="col">Subject</th>
+                  <th scope="col">Type</th>
                   <th scope="col">Exam level</th>
                   <th scope="col">
                     <span className="visually-hidden">Actions</span>
@@ -181,18 +183,25 @@ export default async function HomePage() {
                 </tr>
               </thead>
               <tbody>
-                {recent.map((r) => (
-                  <tr key={r.id}>
-                    <td data-label="Year">{r.year}</td>
-                    <td data-label="Subject">{r.subject}</td>
-                    <td data-label="Exam level">{seriesDisplayLabel(r.examSeriesCode)}</td>
-                    <td>
-                      {/* Template literal again (see src/lib/format.ts) -- builds the
-                          paper's address by dropping its fields into the URL text. */}
-                      <Link href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}>View</Link>
-                    </td>
-                  </tr>
-                ))}
+                {recent.map((r) => {
+                  const variant = paperVariantLabel(r.paperNumber);
+                  const typeLabel = variant
+                    ? `${artifactTypeLabel(r.artifactType)} (${variant})`
+                    : artifactTypeLabel(r.artifactType);
+                  return (
+                    <tr key={r.id}>
+                      <td data-label="Year">{r.year}</td>
+                      <td data-label="Subject">{r.subject}</td>
+                      <td data-label="Type">{typeLabel}</td>
+                      <td data-label="Exam level">{seriesDisplayLabel(r.examSeriesCode)}</td>
+                      <td>
+                        {/* Template literal again (see src/lib/format.ts) -- builds the
+                            paper's address by dropping its fields into the URL text. */}
+                        <Link href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}>View</Link>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
