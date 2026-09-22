@@ -2,9 +2,10 @@
 // a plain link lets Next.js navigate to the new page without a full,
 // slower browser page reload.
 import Link from "next/link";
-import { listExamSeries, listRecentPublicArtifacts, listSubjects, listYears } from "@/lib/db/queries";
+import { getCoverageMatrix, listExamSeries, listRecentPublicArtifacts, listSubjects, listYears } from "@/lib/db/queries";
 import { artifactTypeLabel, paperVariantLabel } from "@/lib/artifact-naming";
 import { seriesDisplayLabel } from "@/lib/format";
+import { deriveMissingPaperRows } from "@/lib/missing-papers";
 
 // The list of papers only changes when the operator publishes or
 // unpublishes something using the command-line tool — it doesn't change
@@ -36,12 +37,14 @@ export default async function HomePage() {
   // Promise.all hands back a list of four results in the same order they
   // were requested, and this line unpacks that list into four separately
   // named variables in one step.
-  const [examSeries, subjects, years, recent] = await Promise.all([
+  const [examSeries, subjects, years, recent, coverageCells] = await Promise.all([
     listExamSeries(),
     listSubjects(),
     listYears(),
     listRecentPublicArtifacts(5),
+    getCoverageMatrix(),
   ]);
+  const missingCount = deriveMissingPaperRows(coverageCells).length;
 
   // Everything from here to the end of the function is "JSX" -- HTML-like
   // markup written directly inside the code, describing what should appear
@@ -69,6 +72,12 @@ export default async function HomePage() {
         Spotted a paper that&apos;s missing, wrong, or looks altered?{" "}
         <Link href="/about#corrections">Report an issue</Link>.
       </p>
+      {missingCount > 0 && (
+        <p className="hint" style={{ marginTop: "0.25rem" }}>
+          {missingCount} paper{missingCount === 1 ? "" : "s"} still missing —{" "}
+          <Link href="/missing">help us find them</Link>.
+        </p>
+      )}
 
       <div className="card-grid" style={{ marginTop: "1.5rem" }}>
         <div className="card">

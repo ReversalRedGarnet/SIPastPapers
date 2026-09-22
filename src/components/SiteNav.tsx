@@ -20,6 +20,7 @@ const ITEMS = [
   { href: "/", label: "Home", exact: true },
   { href: "/browse", label: "Browse", exact: false },
   { href: "/results", label: "Search", exact: false },
+  { href: "/missing", label: "Missing papers", exact: false },
   { href: "/about", label: "About", exact: false },
 ];
 

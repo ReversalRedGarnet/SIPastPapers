@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { getPublicArtifactBySlug, listSubjectArtifacts } from "@/lib/db/queries";
 import { artifactListLabel } from "@/lib/artifact-naming";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
-import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { CONTACT_EMAIL, SITE_NAME, SITE_URL } from "@/lib/site";
 import { reportIssueAction } from "./actions";
 
 interface DocumentPageProps {
@@ -192,7 +192,12 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
           ) : (
             <p className="empty-state">
               This paper has not yet been recovered for the archive. It is
-              listed so the gap is visible rather than hidden.
+              listed so the gap is visible rather than hidden. Have this
+              one?{" "}
+              <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`I have: ${seriesLabel} ${record.subject} ${record.year} — ${typeLabel}`)}`}>
+                Email it to {CONTACT_EMAIL}
+              </a>
+              .
             </p>
           )}
 

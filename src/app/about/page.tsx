@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { CONTACT_EMAIL } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "About",
@@ -69,7 +70,7 @@ export default function AboutPage() {
       <p>
         This project is run independently. For any queries, issues, or
         corrections, contact{" "}
-        <a href="mailto:dorihaop@gmail.com">dorihaop@gmail.com</a>.
+        <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
       </p>
     </>
   );
