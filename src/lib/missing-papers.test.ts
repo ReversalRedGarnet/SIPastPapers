@@ -133,6 +133,36 @@ test("a type never offered by a series is excluded even when the subject itself 
   assert.ok(!sisc1Row, "listening_comprehension isn't a real sisc-l1 gap, so the whole cell has nothing genuinely missing");
 });
 
+test("a series/year with literally zero artifacts ever ingested still appears, not just years with partial data", () => {
+  const cells: CoverageCell[] = [
+    // Establishes mathematics as a real sif3-sijsc subject (a year where
+    // it's genuinely published), same as the relevance-check tests above.
+    cell({
+      examSeriesCode: "sif3-sijsc",
+      year: 2016,
+      subjectSlug: "mathematics",
+      byType: [{ type: "question_paper", status: "published" }],
+    }),
+    // A synthetic cell for a year with zero exam_instances row at all --
+    // this is what getCoverageMatrix() now produces for a (series, year)
+    // combo that's never had anything ingested (e.g. sif3-sijsc 2015/2025
+    // before this fix, they didn't appear in the matrix at all, not even
+    // as "missing"). Every type reads "missing" here, the same shape
+    // getCoverageMatrix() synthesizes for a virtual instance.
+    cell({
+      examSeriesCode: "sif3-sijsc",
+      year: 2015,
+      subjectSlug: "mathematics",
+      byType: [{ type: "question_paper", status: "missing" }],
+    }),
+  ];
+
+  const rows = deriveMissingPaperRows(cells);
+  const row = rows.find((r) => r.examSeriesCode === "sif3-sijsc" && r.year === 2015 && r.subjectSlug === "mathematics");
+  assert.ok(row, "a year with zero real data should still appear as a gap, not be silently absent");
+  assert.deepEqual(row!.missingTypes, ["Question paper"]);
+});
+
 test("returns an empty list when there are no gaps at all", () => {
   const cells: CoverageCell[] = [
     cell({

@@ -2,6 +2,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { query, queryOne, queryWithoutRetry, withTransaction } from "./client";
+import { listBrowseYears } from "@/lib/browse-years";
 import { getStorageProvider } from "@/lib/storage";
 import { buildStorageKey } from "@/lib/storage/types";
 import {
@@ -616,11 +617,50 @@ export interface CoverageCell {
 }
 
 export async function getCoverageMatrix(): Promise<CoverageCell[]> {
-  const instances = await query<{ id: string; year: number; series_code: string; series_name: string }>(
-    `select ei.id, ei.year, es.code as series_code, es.name as series_name
+  const realInstances = await query<{
+    id: string;
+    exam_series_id: string;
+    year: number;
+    series_code: string;
+    series_name: string;
+  }>(
+    `select ei.id, ei.exam_series_id, ei.year, es.code as series_code, es.name as series_name
      from exam_instances ei
      join exam_series es on es.id = ei.exam_series_id
      order by es.name, ei.year`
+  );
+
+  const series = await query<{ id: string; code: string; name: string }>(
+    "select id, code, name from exam_series order by name"
+  );
+
+  // exam_instances rows are only ever created at ingest time (see
+  // ingestArtifact below) -- there's no upfront seeding of a full year
+  // range. So a (series, year) that's never had anything ingested for it
+  // has no exam_instances row at all, and would silently be missing from
+  // this matrix entirely, rather than showing up as a fully-missing cell.
+  // BROWSE_YEAR_FROM/BROWSE_YEAR_TO (see browse-years.ts) is already the
+  // one canonical year range the rest of the site treats every series as
+  // spanning, whether or not data exists yet for a given year -- reusing
+  // it here fills in a synthetic instance for any (series, year) combo
+  // that's missing a real row, with an id that can never match a real
+  // artifact's exam_instance_id, so it naturally resolves to "missing"
+  // for every type below, the same way an empty cell already does.
+  const existingInstanceKeys = new Set(realInstances.map((i) => `${i.exam_series_id}:${i.year}`));
+  const syntheticInstances = series.flatMap((s) =>
+    listBrowseYears()
+      .filter((year) => !existingInstanceKeys.has(`${s.id}:${year}`))
+      .map((year) => ({
+        id: `virtual:${s.id}:${year}`,
+        exam_series_id: s.id,
+        year,
+        series_code: s.code,
+        series_name: s.name,
+      }))
+  );
+
+  const instances = [...realInstances, ...syntheticInstances].sort((a, b) =>
+    a.series_name !== b.series_name ? a.series_name.localeCompare(b.series_name) : a.year - b.year
   );
 
   const subjects = await query<{ id: string; canonical_name: string; subject_code: string | null }>(

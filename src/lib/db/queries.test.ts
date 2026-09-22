@@ -179,6 +179,17 @@ async function insertTestSubject(): Promise<{ id: string; slug: string }> {
   return { id, slug };
 }
 
+async function insertTestSeries(): Promise<{ id: string; code: string }> {
+  const suffix = randomUUID().slice(0, 8);
+  const code = `coverage-test-series-${suffix}`;
+  const id = randomUUID();
+  await query(
+    "insert into exam_series (id, code, name) values ($1, $2, $3)",
+    [id, code, `Coverage Test Series ${suffix}`]
+  );
+  return { id, code };
+}
+
 function findCell(cells: CoverageCell[], seriesCode: string, year: number, subjectSlug: string): CoverageCell {
   const cell = cells.find(
     (c) => c.examSeriesCode === seriesCode && c.year === year && c.subjectSlug === subjectSlug
@@ -296,13 +307,12 @@ test("coverage cell: a year with nothing ingested shows every tracked type as mi
 
     // ...then check a different year for the same subject, where nothing
     // at all was ingested. Reuses year 2020 specifically because it's
-    // already a real, pre-existing exam_instance (see the tests above) --
-    // getCoverageMatrix only ever produces a cell for an exam_instance that
-    // actually exists, and this test's own subject never touches 2020, so
-    // this is a genuinely empty cell to check, without first having to
-    // create the instance itself. The subject still tracks both types
-    // (from the 2099 rows above), so this cell should show both as
-    // individually missing, not fall back to a single generic "missing"
+    // already a real, pre-existing exam_instance (see the tests above), so
+    // this exercises the "instance exists, but zero artifacts for this
+    // subject" path specifically -- see the next test below for the
+    // separate "no exam_instance at all" path. The subject still tracks
+    // both types (from the 2099 rows above), so this cell should show both
+    // as individually missing, not fall back to a single generic "missing"
     // cell that doesn't say which types are absent.
     const cells = await queries.getCoverageMatrix();
     const cell = findCell(cells, "sisc-l1", 2020, subject.slug);
@@ -311,5 +321,49 @@ test("coverage cell: a year with nothing ingested shows every tracked type as mi
     assert.equal(cell.byType.length, 2, "both types this subject tracks should still be listed");
     assert.equal(byType(cell, "question_paper"), "missing");
     assert.equal(byType(cell, "marking_scheme"), "missing");
+  });
+});
+
+test("coverage cell: a series/year with zero exam_instances row at all still appears as fully missing", async () => {
+  await withRolledBackTransaction(async () => {
+    // A brand-new exam_series, guaranteed to have zero exam_instances rows
+    // anywhere -- unlike the real series (sisc-l1 etc.), which already
+    // have a real row for every year in BROWSE_YEAR_FROM..BROWSE_YEAR_TO,
+    // so this is the only reliable way to exercise the "no real instance
+    // at all" path getCoverageMatrix() now synthesizes for, rather than
+    // the "instance exists but this subject has nothing" path the
+    // previous test already covers.
+    const series = await insertTestSeries();
+    const subject = await insertTestSubject();
+
+    // Publish one year for this series, so the subject tracks a real type...
+    const { artifactId } = await queries.ingestArtifact({
+      examSeriesCode: series.code,
+      year: 2016,
+      subjectSlug: subject.slug,
+      artifactType: "question_paper",
+      paperNo: null,
+      file: { buffer: Buffer.from("%PDF-1.4\n%coverage-d\n"), mime: "application/pdf" },
+    });
+    await queries.approveRights(artifactId, {
+      basis: "teacher-verified",
+      approvedBy: "Test Verifier",
+      evidenceUri: "file://evidence/coverage-d.pdf",
+    });
+    await queries.publishArtifact(artifactId);
+
+    // ...then check a different year for the same brand-new series, one
+    // that's never been ingested at all -- no exam_instances row for it
+    // exists anywhere. Before this fix, getCoverageMatrix() would have
+    // produced no cell at all for it (silently absent, not "missing").
+    // 2020 is within BROWSE_YEAR_FROM..BROWSE_YEAR_TO (see browse-years.ts),
+    // so it's exactly the range getCoverageMatrix() now synthesizes a
+    // virtual instance for.
+    const cells = await queries.getCoverageMatrix();
+    const cell = findCell(cells, series.code, 2020, subject.slug);
+
+    assert.equal(cell.status, "missing");
+    assert.equal(cell.byType.length, 1, "the type this series/subject tracks (from the 2016 row) should still be listed");
+    assert.equal(byType(cell, "question_paper"), "missing");
   });
 });
