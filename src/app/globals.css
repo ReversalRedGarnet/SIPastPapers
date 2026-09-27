@@ -933,6 +933,51 @@ dl.meta-table dd {
   color: var(--color-muted);
 }
 
+/* A short, plain-language callout box -- currently just the /missing
+   page's "we don't have these yet" explanation, kept visually distinct
+   from an ordinary paragraph so it reads as the one thing to notice first
+   on the page, not another line of body text. Informational, not a
+   warning, so it uses the calm blue tint rather than the amber warning
+   colors. */
+.callout {
+  border: 1px solid var(--color-border);
+  background: var(--si-blue-tint);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  margin: 1rem 0;
+}
+
+.callout p {
+  margin: 0;
+}
+
+/* A compact per-row action (e.g. the /missing table's "Send it" link) --
+   deliberately smaller than .button, since a full-size button repeated on
+   40+ table rows would be far more visually heavy than the same action
+   needs to be. */
+.table-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
+  background: transparent;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.table-action:hover {
+  background: var(--color-surface);
+}
+
+.table-action svg {
+  flex: 0 0 auto;
+}
+
 .form-actions {
   display: flex;
   gap: 0.75rem;

@@ -1,5 +1,6 @@
 import type { CoverageCell } from "@/lib/db/queries";
 import { artifactTypeLabel } from "@/lib/artifact-naming";
+import type { ArtifactType } from "@/types/domain";
 
 export interface MissingPaperRow {
   examSeriesCode: string;
@@ -9,8 +10,13 @@ export interface MissingPaperRow {
   subjectName: string;
   // Human-readable type labels (e.g. ["Question paper", "Marking scheme"]),
   // already filtered to only the types genuinely relevant to this series --
-  // see the big comment below.
+  // see the big comment below. Used for the mailto subject line, where the
+  // full words read better than an abbreviation.
   missingTypes: string[];
+  // The same missing types, but as raw ArtifactType values, same order as
+  // missingTypes -- lets a caller render its own compact form (e.g. a
+  // short badge) instead of always spelling the type out in full.
+  missingArtifactTypes: ArtifactType[];
 }
 
 /**
@@ -59,6 +65,7 @@ export function deriveMissingPaperRows(cells: CoverageCell[]): MissingPaperRow[]
       subjectSlug: cell.subjectSlug,
       subjectName: cell.subjectName,
       missingTypes: missing.map((entry) => artifactTypeLabel(entry.type)),
+      missingArtifactTypes: missing.map((entry) => entry.type),
     });
   }
 

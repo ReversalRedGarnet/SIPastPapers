@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { getCoverageMatrix } from "@/lib/db/queries";
 import { deriveMissingPaperRows, type MissingPaperRow } from "@/lib/missing-papers";
 import { seriesDisplayLabel } from "@/lib/format";
+import { artifactTypeLabel } from "@/lib/artifact-naming";
 import { CONTACT_EMAIL } from "@/lib/site";
+import { Badge } from "@/components/Badge";
 
 export const metadata: Metadata = {
   title: "Missing papers",
@@ -22,6 +24,19 @@ export const revalidate = 300;
 function mailtoHref(row: MissingPaperRow): string {
   const subject = `I have: ${row.examSeriesName} ${row.subjectName} ${row.year} (${row.missingTypes.join(" + ")})`;
   return `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}`;
+}
+
+// A small inline icon rather than a library import -- this is the only
+// icon on the page, so pulling in an icon package for one shape isn't
+// worth it. `aria-hidden` because the link it sits inside already has its
+// own accessible name.
+function MailIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="2" y="4" width="16" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M3 5.5L10 11L17 5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 export default async function MissingPapersPage() {
@@ -45,16 +60,13 @@ export default async function MissingPapersPage() {
   return (
     <>
       <h1>Missing papers</h1>
-      <p className="lede">
-        These are papers the archive knows should exist but doesn&apos;t have a
-        copy of yet — some were never recovered, some just haven&apos;t been
-        acquired for that year at all. Nothing here is fabricated or
-        guessed; each row is a real gap tracked in the archive itself.
-      </p>
-      <p className="lede">
-        Have one of these? Email it to{" "}
-        <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
-      </p>
+
+      <div className="callout">
+        <p>
+          <strong>We do not have these papers yet.</strong> If you have a
+          copy of one, please send it to us.
+        </p>
+      </div>
 
       {groups.length === 0 ? (
         <p className="empty-state">No known gaps right now — everything tracked has been recovered.</p>
@@ -71,7 +83,7 @@ export default async function MissingPapersPage() {
                   <tr>
                     <th scope="col">Year</th>
                     <th scope="col">Subject</th>
-                    <th scope="col">What&apos;s missing</th>
+                    <th scope="col">Missing</th>
                     <th scope="col">
                       <span className="visually-hidden">Contribute</span>
                     </th>
@@ -82,9 +94,22 @@ export default async function MissingPapersPage() {
                     <tr key={`${row.examSeriesCode}-${row.year}-${row.subjectSlug}`}>
                       <td data-label="Year">{row.year}</td>
                       <td data-label="Subject">{row.subjectName}</td>
-                      <td data-label="What's missing">{row.missingTypes.join(" + ")}</td>
+                      <td data-label="Missing">
+                        {row.missingArtifactTypes.map((type) => (
+                          <Badge key={type} tone="neutral">
+                            {artifactTypeLabel(type)}
+                          </Badge>
+                        ))}
+                      </td>
                       <td>
-                        <a href={mailtoHref(row)}>Have this one? Email it to {CONTACT_EMAIL}</a>
+                        <a
+                          className="table-action"
+                          href={mailtoHref(row)}
+                          aria-label={`Send us ${row.subjectName} ${row.year} (${seriesDisplayLabel(row.examSeriesCode)})`}
+                        >
+                          <MailIcon />
+                          Send it
+                        </a>
                       </td>
                     </tr>
                   ))}
