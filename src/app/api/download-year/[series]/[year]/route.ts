@@ -95,7 +95,11 @@ export async function GET(
     );
   }
 
-  const archive = new ZipArchive({ zlib: { level: 6 } });
+  // `store: true` puts each PDF into the zip as-is, without compressing it
+  // again. PDFs are already compressed inside, so re-compressing them
+  // saved almost nothing while costing server time on every download
+  // (and delaying the first bytes reaching the visitor).
+  const archive = new ZipArchive({ store: true });
 
   // A genuine storage failure while building the zip (not the "soft"
   // missing-file case already handled inside appendFile above) cancels
