@@ -130,6 +130,10 @@ downside of dropping the sqlite fallback is small. Run
   `migrations/0001_init.sql`, applied with `npm run db:migrate`
 - Local filesystem storage or Cloudflare R2, switched via
   `STORAGE_BACKEND` (behind the `StorageProvider` abstraction)
+- Hosted on Vercel. [`vercel.json`](./vercel.json) pins server functions
+  to `syd1` (Sydney), next to the Neon database (`ap-southeast-2`) and the
+  closest Vercel region to Solomon Islands visitors — Vercel's default
+  (`iad1`, Washington DC) put every database query across the Pacific
 
 ## Getting started
 
