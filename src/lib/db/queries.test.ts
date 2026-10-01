@@ -562,3 +562,26 @@ test("publish is refused for an unapproved rights status or expired rights, even
     assert.ok(!("missing" in ok), "publishes once rights are approved and unexpired");
   });
 });
+
+test("rights-expiring lists papers expiring within the window, and already-expired (hidden) ones", async () => {
+  await withRolledBackTransaction(async () => {
+    const paper = await publishTestPaper("2");
+    const find = async (days: number) =>
+      (await queries.listPublishedRightsExpiring(days)).find((e) => e.artifactId === paper.artifactId);
+
+    assert.equal(await find(365), undefined, "no expiry date: never listed");
+
+    await query("update rights_records set expiry_date = current_date + 10 where artifact_id = $1", [paper.artifactId]);
+    assert.equal((await find(30))?.daysLeft, 10);
+    assert.equal(await find(5), undefined, "outside the window");
+
+    await query("update rights_records set expiry_date = current_date - 3 where artifact_id = $1", [paper.artifactId]);
+    assert.equal((await find(0))?.daysLeft, -3, "already expired papers are always listed");
+
+    await query("update rights_records set expiry_date = null, rights_status = 'rights_hold' where artifact_id = $1", [
+      paper.artifactId,
+    ]);
+    const unapproved = await queries.listPublishedWithUnapprovedRights();
+    assert.equal(unapproved.find((u) => u.artifactId === paper.artifactId)?.rightsStatus, "rights_hold");
+  });
+});

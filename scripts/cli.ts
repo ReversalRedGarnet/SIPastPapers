@@ -21,6 +21,8 @@ import {
   getCoverageMatrix,
   ingestArtifact,
   listAllArtifacts,
+  listPublishedRightsExpiring,
+  listPublishedWithUnapprovedRights,
   listStoredFiles,
   publishArtifact,
   unpublishArtifact,
@@ -476,6 +478,47 @@ async function runList(): Promise<void> {
   }
 }
 
+// --- rights-expiring --------------------------------------------------------
+
+async function runRightsExpiring(args: ParsedArgs): Promise<void> {
+  const days = Number(args.flags.days);
+  if (!args.flags.days || !Number.isInteger(days) || days < 0) {
+    fail("Usage: rights-expiring --days <N>   (N = a whole number of days, 0 or more)");
+  }
+
+  const entries = await listPublishedRightsExpiring(days);
+  const expired = entries.filter((e) => e.daysLeft < 0);
+  const upcoming = entries.filter((e) => e.daysLeft >= 0);
+
+  console.log(`Published papers whose rights expire within ${days} day${days === 1 ? "" : "s"} (${upcoming.length}):`);
+  if (upcoming.length === 0) console.log("  (none)");
+  for (const e of upcoming) {
+    const when = e.daysLeft === 0 ? "today (last valid day)" : `in ${e.daysLeft} day${e.daysLeft === 1 ? "" : "s"}`;
+    console.log(`  ${e.expiry}  ${when.padEnd(22)}  ${e.artifactId}  ${e.title}`);
+  }
+
+  console.log(`\nAlready expired -- published but now HIDDEN from the public site (${expired.length}):`);
+  if (expired.length === 0) console.log("  (none)");
+  for (const e of expired) {
+    const ago = `${-e.daysLeft} day${e.daysLeft === -1 ? "" : "s"} ago`;
+    console.log(`  ${e.expiry}  ${ago.padEnd(22)}  ${e.artifactId}  ${e.title}`);
+  }
+
+  const unapproved = await listPublishedWithUnapprovedRights();
+  console.log(`\nRights no longer approved -- published but now HIDDEN from the public site (${unapproved.length}):`);
+  if (unapproved.length === 0) console.log("  (none)");
+  for (const u of unapproved) {
+    console.log(`  ${(u.rightsStatus ?? "no rights record").padEnd(32)}  ${u.artifactId}  ${u.title}`);
+  }
+
+  if (expired.length > 0 || unapproved.length > 0) {
+    console.log(
+      "\nHidden papers stay hidden until their rights are approved again (approve-rights, with a new --expiry if" +
+        "\nneeded), or can be taken down properly with unpublish."
+    );
+  }
+}
+
 // --- R2 object headers -------------------------------------------------------
 
 // How long the presigned check link printed by inspect-object and
@@ -812,6 +855,11 @@ Commands:
   coverage
       Print the year x subject coverage matrix.
 
+  rights-expiring --days <N>
+      List published papers whose rights expire within N days (soonest
+      first), plus published papers already HIDDEN from the public site
+      because their rights expired or are no longer approved.
+
   inspect-object (--key <storage-key> | --file-id <id>)
       R2 only, read-only. Show the headers R2 has stored for one file, then
       fetch it through a real presigned R2 link and show the headers R2
@@ -860,6 +908,9 @@ async function main(): Promise<void> {
       break;
     case "coverage":
       await runCoverage();
+      break;
+    case "rights-expiring":
+      await runRightsExpiring(args);
       break;
     case "inspect-object":
       await runInspectObject(args);

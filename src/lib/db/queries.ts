@@ -1221,6 +1221,72 @@ export async function approveRights(
   });
 }
 
+export interface RightsExpiryEntry {
+  artifactId: string;
+  title: string;
+  /** "YYYY-MM-DD" */
+  expiry: string;
+  /** Days from today until the expiry date: 0 = expires today (still valid), negative = already expired. */
+  daysLeft: number;
+}
+
+/**
+ * Published papers whose rights expire within `days` days, plus any whose
+ * expiry date has already passed -- those are now hidden from the public
+ * site (see RIGHTS_CURRENTLY_APPROVED) even though still "published".
+ * Soonest first. For the CLI's rights-expiring command.
+ */
+export async function listPublishedRightsExpiring(days: number): Promise<RightsExpiryEntry[]> {
+  const rows = await query<{ id: string; title: string; expiry: string; days_left: number }>(
+    // Subtracting one date from another in Postgres gives a whole number of
+    // days; `$1::int` makes `current_date + $1` mean "that many days ahead".
+    `select a.id, a.title,
+            to_char(latest.expiry_date, 'YYYY-MM-DD') as expiry,
+            latest.expiry_date - current_date as days_left
+     from artifacts a
+     join lateral (
+       select rr.expiry_date
+       from rights_records rr
+       where rr.artifact_id = a.id
+       order by rr.created_at desc
+       limit 1
+     ) latest on true
+     where a.status = 'published'
+       and latest.expiry_date is not null
+       and latest.expiry_date <= current_date + $1::int
+     order by latest.expiry_date, a.title`,
+    [days]
+  );
+  return rows.map((r) => ({ artifactId: r.id, title: r.title, expiry: r.expiry, daysLeft: r.days_left }));
+}
+
+/**
+ * Published papers whose most recent rights record doesn't have an
+ * approved status (e.g. it was set to rights_hold or denied after
+ * publishing) -- also hidden from the public site despite being
+ * "published". For the CLI's rights-expiring command.
+ */
+export async function listPublishedWithUnapprovedRights(): Promise<
+  { artifactId: string; title: string; rightsStatus: RightsStatus | null }[]
+> {
+  const rows = await query<{ id: string; title: string; rights_status: RightsStatus | null }>(
+    `select a.id, a.title, latest.rights_status
+     from artifacts a
+     left join lateral (
+       select rr.rights_status
+       from rights_records rr
+       where rr.artifact_id = a.id
+       order by rr.created_at desc
+       limit 1
+     ) latest on true
+     where a.status = 'published'
+       and (latest.rights_status is null
+            or latest.rights_status not in (${APPROVED_RIGHTS_STATUSES.map((s) => `'${s}'`).join(", ")}))
+     order by a.title`
+  );
+  return rows.map((r) => ({ artifactId: r.id, title: r.title, rightsStatus: r.rights_status }));
+}
+
 export interface RightsGateStatus {
   satisfied: boolean;
   missing: string[];
