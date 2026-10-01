@@ -7,16 +7,9 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { createIssue } from "@/lib/db/queries";
+import { createIssue, getPublicArtifactPath } from "@/lib/db/queries";
+import { parseReportForm, safeReturnTo } from "@/lib/report-form";
 import { reportStatusHref } from "@/lib/report-status";
-
-const VALID_ISSUE_TYPES = [
-  "wrong_metadata",
-  "missing_or_corrupt",
-  "suspected_authenticity",
-  "rights_concern",
-  "other",
-];
 
 /**
  * Handles the "report a problem" form on a paper's page: takes in what
@@ -24,47 +17,39 @@ const VALID_ISSUE_TYPES = [
  * records the report. Actually putting a paper on hold, reviewing the
  * report, and resolving it are separate steps done later by the operator
  * through the command-line tool, and aren't built yet.
+ *
+ * This is a Server Action, which (unlike the rendered form) can be POSTed
+ * to directly with any values -- so every field is checked first (see
+ * parseReportForm), and a report is only saved against a paper that
+ * really exists and is public.
+ *
+ * `redirect(...)` is a Next.js function that sends the visitor's browser
+ * to a different address -- here, back to the paper's page with a fixed
+ * status code the page turns into a message (see
+ * src/lib/report-status.ts). It also stops this function right there.
  */
 // `FormData` is a standard web API representing everything submitted in an
 // HTML form; `.get("artifactId")` reads one named field's value back out
-// (or null if it wasn't present). `String(...)` explicitly converts
-// whatever comes back into plain text, the same way `Number(...)` and
-// `Boolean(...)` convert to those other types elsewhere in this project.
+// (or null if it wasn't present).
 export async function reportIssueAction(formData: FormData): Promise<void> {
-  const artifactId = String(formData.get("artifactId") ?? "").trim();
-  // This is a Server Action, which (unlike the rendered form) can be
-  // POSTed to directly with any value -- so a submitted returnTo isn't
-  // trustworthy just because the form always sends a safe one. Only a
-  // same-site relative path (starting with "/", but not "//", which
-  // browsers treat as protocol-relative to an external host) is allowed
-  // through; anything else falls back to the homepage instead of letting
-  // this redirect somewhere off-site.
-  const returnToRaw = String(formData.get("returnTo") ?? "/");
-  const returnTo = returnToRaw.startsWith("/") && !returnToRaw.startsWith("//") ? returnToRaw : "/";
-  const issueType = String(formData.get("issueType") ?? "other");
-  const description = String(formData.get("description") ?? "").trim();
-  // `||` (as opposed to `??`, used everywhere else in this project) also
-  // falls back to the right-hand side, but treats *any* "empty-ish" value
-  // -- including an empty string, not just missing/null/undefined -- as
-  // reason to use the fallback. That distinction matters here: after
-  // `.trim()`, a contact field that was typed as just blank spaces becomes
-  // "", and `||` correctly treats that the same as "no contact given."
-  const contact = String(formData.get("contact") ?? "").trim() || null;
+  // Only used when we can't work out the paper's page ourselves.
+  const fallbackReturnTo = safeReturnTo(formData.get("returnTo"));
+  const parsed = parseReportForm(formData);
 
-  if (!artifactId || !description) {
-    // `redirect(...)` is a Next.js function that sends the visitor's
-    // browser to a different address -- here, back to the paper's page
-    // with a fixed status code the page turns into a message (see
-    // src/lib/report-status.ts).
-    redirect(reportStatusHref(returnTo, "missing-details"));
-  }
+  // A bot filled in the hidden spam-trap field: act as if it worked, so it
+  // has no reason to try again differently, but save nothing.
+  if (parsed.kind === "spam") redirect(reportStatusHref(fallbackReturnTo, "sent"));
+  if (parsed.kind === "invalid") redirect(reportStatusHref(fallbackReturnTo, parsed.code));
+
+  const paperPath = await getPublicArtifactPath(parsed.artifactId);
+  if (!paperPath) redirect(reportStatusHref(fallbackReturnTo, "unknown-paper"));
 
   await createIssue({
-    artifactId,
-    issueType: VALID_ISSUE_TYPES.includes(issueType) ? issueType : "other",
-    description,
-    contact,
+    artifactId: parsed.artifactId,
+    issueType: parsed.issueType,
+    description: parsed.description,
+    contact: parsed.contact,
   });
 
-  redirect(reportStatusHref(returnTo, "sent"));
+  redirect(reportStatusHref(paperPath, "sent"));
 }

@@ -1015,6 +1015,27 @@ export async function getFileForDownload(fileId: string): Promise<DownloadableFi
 
 // --- Handling reports from the public — corrections, takedown requests, etc. ---
 
+/**
+ * The public page address of a paper (e.g.
+ * "/exams/sisc-l1/2019/mathematics/paper-1"), or undefined if there's no
+ * such paper or it isn't public. Used by the report form to confirm a
+ * report is about a real, public paper, and to send the visitor back to it.
+ */
+export async function getPublicArtifactPath(artifactId: string): Promise<string | undefined> {
+  const row = await queryOne<{ type: ArtifactType; paper_no: string | null; year: number; series_code: string; subject_slug: string | null }>(
+    `select a.type, a.paper_no, ei.year, es.code as series_code, s.subject_code as subject_slug
+     from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     join exam_series es on es.id = ei.exam_series_id
+     join subjects s on s.id = a.subject_id
+     where a.id = $1 and a.status in ${PUBLIC_STATUSES}`,
+    [artifactId]
+  );
+  if (!row) return undefined;
+  const slug = artifactSlug({ artifactType: row.type, paperNo: row.paper_no });
+  return `/exams/${row.series_code}/${row.year}/${row.subject_slug ?? ""}/${slug}`;
+}
+
 export async function createIssue(input: {
   artifactId: string;
   issueType: string;

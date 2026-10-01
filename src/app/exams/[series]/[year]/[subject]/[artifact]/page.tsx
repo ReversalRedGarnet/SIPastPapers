@@ -8,6 +8,7 @@ import { formatBytes, seriesDisplayLabel } from "@/lib/format";
 import { CONTACT_EMAIL, SITE_NAME, SITE_URL } from "@/lib/site";
 import { PdfPreview } from "@/components/PdfPreview";
 import { ReportStatus } from "@/components/ReportStatus";
+import { CONTACT_MAX_LENGTH, DESCRIPTION_MAX_LENGTH, HONEYPOT_FIELD } from "@/lib/report-form";
 import { reportIssueAction } from "./actions";
 
 interface DocumentPageProps {
@@ -348,14 +349,22 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
 
           <div className="field">
             <label htmlFor="description">Details</label>
-            <textarea id="description" name="description" required />
+            <textarea id="description" name="description" required maxLength={DESCRIPTION_MAX_LENGTH} />
           </div>
 
           <div className="field">
             <label htmlFor="contact">
               Your email <span className="hint">(optional, only if you&apos;re happy to be contacted)</span>
             </label>
-            <input type="email" id="contact" name="contact" />
+            <input type="email" id="contact" name="contact" maxLength={CONTACT_MAX_LENGTH} />
+          </div>
+
+          {/* Spam trap (see HONEYPOT_FIELD in src/lib/report-form.ts):
+              hidden from sight, from screen readers and from keyboard
+              focus, so only bots that fill in every field will fill it. */}
+          <div className="visually-hidden" aria-hidden="true">
+            <label htmlFor={HONEYPOT_FIELD}>Leave this empty</label>
+            <input type="text" id={HONEYPOT_FIELD} name={HONEYPOT_FIELD} tabIndex={-1} autoComplete="off" />
           </div>
 
           <div className="form-actions">

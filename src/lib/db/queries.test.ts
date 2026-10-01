@@ -439,3 +439,27 @@ test("an orphaned upload is reused only if it's byte-for-byte the same file", as
   const stored = await getStorageProvider().get(storageKey);
   assert.equal(stored?.toString(), input.file.buffer.toString());
 });
+
+test("getPublicArtifactPath finds a published paper's page, and nothing for an unpublished one", async () => {
+  await withRolledBackTransaction(async () => {
+    const { artifactId } = await queries.ingestArtifact({
+      examSeriesCode: "sisc-l1",
+      year: 2099,
+      subjectSlug: "mathematics",
+      artifactType: "question_paper",
+      paperNo: "6",
+      file: { buffer: Buffer.from("%PDF-1.4\n%report-path\n"), mime: "application/pdf" },
+    });
+    assert.equal(await queries.getPublicArtifactPath(artifactId), undefined, "pending_review must not be reportable");
+
+    await queries.approveRights(artifactId, {
+      basis: "teacher-verified",
+      approvedBy: "Test Verifier",
+      evidenceUri: "file://evidence/report-path.pdf",
+    });
+    await queries.publishArtifact(artifactId);
+    assert.equal(await queries.getPublicArtifactPath(artifactId), "/exams/sisc-l1/2099/mathematics/paper-6");
+
+    assert.equal(await queries.getPublicArtifactPath(randomUUID()), undefined);
+  });
+});
