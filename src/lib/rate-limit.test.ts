@@ -68,31 +68,31 @@ test("a request without a valid cookie is issued a new one and counted as cookie
 
 test("the same file counts once, however many times it's requested", () => {
   const visitor = returningVisitor();
-  const { perVisitor } = rateLimitConfig("download");
+  const { perVisitor } = rateLimitConfig("open");
   for (let i = 0; i < perVisitor * 3; i++) {
-    assert.equal(take(rateLimit("download", visitor, "file-1", T0 + i)).allowed, true);
+    assert.equal(take(rateLimit("open", visitor, "file-1", T0 + i)).allowed, true);
   }
   // The visitor's whole allowance minus that one file is still free.
   for (let i = 2; i <= perVisitor; i++) {
-    assert.equal(take(rateLimit("download", visitor, `file-${i}`, T0)).allowed, true);
+    assert.equal(take(rateLimit("open", visitor, `file-${i}`, T0)).allowed, true);
   }
 });
 
 test("nothing counts until record() is called (a 404 or failure is free)", () => {
   const visitor = returningVisitor();
-  const { perVisitor } = rateLimitConfig("download");
+  const { perVisitor } = rateLimitConfig("open");
   for (let i = 0; i < perVisitor * 2; i++) {
-    assert.equal(rateLimit("download", visitor, `missing-${i}`, T0).allowed, true); // never recorded
+    assert.equal(rateLimit("open", visitor, `missing-${i}`, T0).allowed, true); // never recorded
   }
-  assert.equal(rateLimit("download", visitor, "real-file", T0).allowed, true);
+  assert.equal(rateLimit("open", visitor, "real-file", T0).allowed, true);
 });
 
 test("a visitor is blocked after their allowance of distinct downloads, with the real wait", () => {
   const visitor = returningVisitor();
-  const { perVisitor, windowMs } = rateLimitConfig("download");
-  for (let i = 0; i < perVisitor; i++) take(rateLimit("download", visitor, `file-${i}`, T0 + i * 1000));
+  const { perVisitor, windowMs } = rateLimitConfig("open");
+  for (let i = 0; i < perVisitor; i++) take(rateLimit("open", visitor, `file-${i}`, T0 + i * 1000));
 
-  const blocked = rateLimit("download", visitor, "one-more", T0 + 5 * MINUTE);
+  const blocked = rateLimit("open", visitor, "one-more", T0 + 5 * MINUTE);
   assert.equal(blocked.allowed, false);
   if (blocked.allowed) return;
   assert.equal(blocked.scope, "visitor");
@@ -101,55 +101,55 @@ test("a visitor is blocked after their allowance of distinct downloads, with the
   assert.equal(blocked.retryAfterSeconds, (windowMs - 5 * MINUTE) / 1000);
 
   // ...and a paper already downloaded can still be opened again.
-  assert.equal(rateLimit("download", visitor, "file-0", T0 + 5 * MINUTE).allowed, true);
+  assert.equal(rateLimit("open", visitor, "file-0", T0 + 5 * MINUTE).allowed, true);
 });
 
 test("the window slides: once old downloads age out, new ones are allowed", () => {
   const visitor = returningVisitor();
-  const { perVisitor, windowMs } = rateLimitConfig("download");
-  for (let i = 0; i < perVisitor; i++) take(rateLimit("download", visitor, `file-${i}`, T0));
-  assert.equal(rateLimit("download", visitor, "next", T0 + windowMs - 1).allowed, false);
-  assert.equal(rateLimit("download", visitor, "next", T0 + windowMs).allowed, true);
+  const { perVisitor, windowMs } = rateLimitConfig("open");
+  for (let i = 0; i < perVisitor; i++) take(rateLimit("open", visitor, `file-${i}`, T0));
+  assert.equal(rateLimit("open", visitor, "next", T0 + windowMs - 1).allowed, false);
+  assert.equal(rateLimit("open", visitor, "next", T0 + windowMs).allowed, true);
 });
 
 test("students sharing one school/CGNAT address each get their own allowance", () => {
-  const { perVisitor } = rateLimitConfig("download");
+  const { perVisitor } = rateLimitConfig("open");
   for (let student = 0; student < 10; student++) {
     const visitor = returningVisitor(SCHOOL_IP);
     for (let i = 0; i < perVisitor; i++) {
-      assert.equal(take(rateLimit("download", visitor, `s${student}-f${i}`, T0)).allowed, true);
+      assert.equal(take(rateLimit("open", visitor, `s${student}-f${i}`, T0)).allowed, true);
     }
   }
 });
 
 test("the per-address backstop still applies across everyone at that address", () => {
-  process.env.RATE_LIMIT_DOWNLOAD_PER_IP = "5";
-  for (let i = 0; i < 5; i++) take(rateLimit("download", returningVisitor(), `f${i}`, T0));
+  process.env.RATE_LIMIT_OPEN_PER_IP = "5";
+  for (let i = 0; i < 5; i++) take(rateLimit("open", returningVisitor(), `f${i}`, T0));
 
-  const blocked = rateLimit("download", returningVisitor(), "f5", T0);
+  const blocked = rateLimit("open", returningVisitor(), "f5", T0);
   assert.equal(blocked.allowed, false);
   assert.equal(!blocked.allowed && blocked.scope, "ip");
 
-  assert.equal(rateLimit("download", returningVisitor("203.0.113.99"), "f5", T0).allowed, true, "other addresses unaffected");
+  assert.equal(rateLimit("open", returningVisitor("203.0.113.99"), "f5", T0).allowed, true, "other addresses unaffected");
 });
 
 test("requests without a cookie share a smaller per-address allowance, so dropping cookies doesn't help", () => {
-  const { perIpNoCookie } = rateLimitConfig("download");
+  const { perIpNoCookie } = rateLimitConfig("open");
   for (let i = 0; i < perIpNoCookie; i++) {
-    assert.equal(take(rateLimit("download", identifyVisitor(undefined, SCHOOL_IP), `f${i}`, T0)).allowed, true);
+    assert.equal(take(rateLimit("open", identifyVisitor(undefined, SCHOOL_IP), `f${i}`, T0)).allowed, true);
   }
-  const blocked = rateLimit("download", identifyVisitor(undefined, SCHOOL_IP), "one-more", T0);
+  const blocked = rateLimit("open", identifyVisitor(undefined, SCHOOL_IP), "one-more", T0);
   assert.equal(!blocked.allowed && blocked.scope, "no-cookie");
 
   // A browser that kept its cookie isn't affected.
-  assert.equal(rateLimit("download", returningVisitor(), "one-more", T0).allowed, true);
+  assert.equal(rateLimit("open", returningVisitor(), "one-more", T0).allowed, true);
 });
 
-test("buckets are separate: viewing doesn't use up the download allowance", () => {
+test("buckets are separate: previews don't use up the allowance for opening papers", () => {
   const visitor = returningVisitor();
-  const { perVisitor } = rateLimitConfig("download");
-  for (let i = 0; i < perVisitor; i++) take(rateLimit("view", visitor, `f${i}`, T0));
-  assert.equal(rateLimit("download", visitor, "f0", T0).allowed, true);
+  const { perVisitor } = rateLimitConfig("open");
+  for (let i = 0; i < perVisitor; i++) take(rateLimit("preview", visitor, `f${i}`, T0));
+  assert.equal(rateLimit("open", visitor, "f0", T0).allowed, true);
 });
 
 test("limits come from environment variables, falling back to defaults when invalid", () => {
@@ -164,7 +164,7 @@ test("limits come from environment variables, falling back to defaults when inva
 
 test("default limits match the agreed starting values", () => {
   for (const name of Object.keys(process.env)) if (name.startsWith("RATE_LIMIT_") && name !== "RATE_LIMIT_SECRET") delete process.env[name];
-  assert.deepEqual(rateLimitConfig("view"), { windowMs: 600_000, perVisitor: 120, perIp: 1000, perIpNoCookie: 300 });
-  assert.deepEqual(rateLimitConfig("download"), { windowMs: 600_000, perVisitor: 40, perIp: 600, perIpNoCookie: 60 });
+  assert.deepEqual(rateLimitConfig("preview"), { windowMs: 600_000, perVisitor: 120, perIp: 1000, perIpNoCookie: 300 });
+  assert.deepEqual(rateLimitConfig("open"), { windowMs: 600_000, perVisitor: 40, perIp: 600, perIpNoCookie: 60 });
   assert.deepEqual(rateLimitConfig("zip"), { windowMs: 600_000, perVisitor: 3, perIp: 20, perIpNoCookie: 10 });
 });

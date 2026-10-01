@@ -6,7 +6,7 @@ import { signingSecret, type Visitor } from "@/lib/rate-limit";
  * usage patterns (and any visitors wrongly blocked) show up in the hosting
  * logs. Each event is one line of JSON -- e.g.
  *
- *   {"evt":"file","kind":"download","outcome":"served","fileId":"…","ip":"3f9a…","visitor":"81c2…","ua":"mobile",…}
+ *   {"evt":"file","kind":"open","outcome":"served","fileId":"…","ip":"3f9a…","visitor":"81c2…","ua":"mobile",…}
  *
  * -- so the log search can filter on any field (evt:rate_limited, ua:mobile).
  *

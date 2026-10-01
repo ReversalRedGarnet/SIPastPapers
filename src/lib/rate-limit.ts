@@ -30,7 +30,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
  * a soft limit. Large-scale floods are for the hosting firewall to handle.
  */
 
-export type RateLimitBucket = "view" | "download" | "zip" | "report";
+export type RateLimitBucket = "preview" | "open" | "zip" | "report";
 
 export interface RateLimitConfig {
   windowMs: number;
@@ -45,8 +45,8 @@ export interface RateLimitConfig {
 const DEFAULT_WINDOW_SECONDS = 600;
 
 const DEFAULT_LIMITS: Record<RateLimitBucket, Omit<RateLimitConfig, "windowMs">> = {
-  view: { perVisitor: 120, perIp: 1000, perIpNoCookie: 300 },
-  download: { perVisitor: 40, perIp: 600, perIpNoCookie: 60 },
+  preview: { perVisitor: 120, perIp: 1000, perIpNoCookie: 300 },
+  open: { perVisitor: 40, perIp: 600, perIpNoCookie: 60 },
   zip: { perVisitor: 3, perIp: 20, perIpNoCookie: 10 },
   report: { perVisitor: 5, perIp: 30, perIpNoCookie: 10 },
 };
@@ -69,8 +69,8 @@ function envPositiveInt(name: string, fallback: number): number {
 
 /**
  * The limits for one bucket, read from the environment each time (it's
- * cheap), e.g. RATE_LIMIT_DOWNLOAD_PER_VISITOR, RATE_LIMIT_ZIP_PER_IP,
- * RATE_LIMIT_VIEW_PER_IP_NO_COOKIE, RATE_LIMIT_WINDOW_SECONDS.
+ * cheap), e.g. RATE_LIMIT_OPEN_PER_VISITOR, RATE_LIMIT_ZIP_PER_IP,
+ * RATE_LIMIT_PREVIEW_PER_IP_NO_COOKIE, RATE_LIMIT_WINDOW_SECONDS.
  */
 export function rateLimitConfig(bucket: RateLimitBucket): RateLimitConfig {
   const prefix = `RATE_LIMIT_${bucket.toUpperCase()}`;

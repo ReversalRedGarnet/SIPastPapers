@@ -187,13 +187,16 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
           {record.file ? (
             <>
               <div className="doc-actions">
-                <a className="button" href={`/api/files/${record.file.id}?dl=1`}>
-                  Download ({formatBytes(record.file.bytes)})
+                <a className="button" href={`/api/files/${record.file.id}`}>
+                  Open PDF ({formatBytes(record.file.bytes)})
                 </a>
                 <a className="button secondary" href={`/api/files/${record.file.id}`} target="_blank" rel="noreferrer">
                   Open in new tab
                 </a>
               </div>
+              <p className="hint">
+                It opens in your browser. To keep a copy, use your browser&apos;s download or share button.
+              </p>
 
               <details className="tech-details">
                 <summary>More information</summary>
@@ -232,7 +235,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
         <div className="doc-viewer">
           {record.file ? (
             <PdfPreview
-              src={`/api/files/${record.file.id}`}
+              src={`/api/files/${record.file.id}?preview=1`}
               title={`Preview of ${record.title}`}
               sizeLabel={formatBytes(record.file.bytes)}
             />

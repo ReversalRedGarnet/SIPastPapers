@@ -196,6 +196,9 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
         </p>
       ) : (
         <>
+          <p className="hint">
+            Open PDF opens a paper in your browser. To keep a copy, use your browser&apos;s download or share button.
+          </p>
           <div className="data-table table-scroll">
             <table>
               <caption className="visually-hidden">Matching exam papers</caption>
@@ -234,7 +237,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                         {r.file && (
                           <>
                             {" · "}
-                            <a href={`/api/files/${r.file.id}?dl=1`}>Download ({formatBytes(r.file.bytes)})</a>
+                            <a href={`/api/files/${r.file.id}`}>Open PDF ({formatBytes(r.file.bytes)})</a>
                           </>
                         )}
                       </td>

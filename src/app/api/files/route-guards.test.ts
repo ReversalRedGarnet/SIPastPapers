@@ -29,7 +29,7 @@ before(async () => {
 
 beforeEach(() => {
   resetRateLimitsForTests();
-  delete process.env.RATE_LIMIT_VIEW_PER_VISITOR;
+  delete process.env.RATE_LIMIT_OPEN_PER_VISITOR;
 });
 
 function call(handler: typeof GET, fileId: string, headers: Record<string, string> = {}) {
@@ -53,10 +53,10 @@ test("a first-time visitor is given the visitor cookie, even on a 404", async ()
 });
 
 test("a visitor over their allowance gets a 429 before the database is asked", async () => {
-  process.env.RATE_LIMIT_VIEW_PER_VISITOR = "1";
+  process.env.RATE_LIMIT_OPEN_PER_VISITOR = "1";
   const cookie = mintVisitorCookie().value;
   // This visitor has already been served one (different) file.
-  const used = rateLimit("view", identifyVisitor(cookie, "203.0.113.7"), FILE_A);
+  const used = rateLimit("open", identifyVisitor(cookie, "203.0.113.7"), FILE_A);
   assert.ok(used.allowed);
   used.record();
 

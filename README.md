@@ -98,7 +98,7 @@ in the repository.
     storage. The PDF download/view route
     ([`src/app/api/files/[fileId]/route.ts`](./src/app/api/files/[fileId]/route.ts))
     re-checks the paper's publication and rights status on every request,
-    applies the download rate limit, then redirects (302) to a presigned
+    applies the rate limit, then redirects (302) to a presigned
     R2 URL valid for 10 minutes — so PDF bytes never pass through the app.
     A paper that's unpublished stops being handed out at once; a link
     handed out just before stays valid until it expires (accepted, see

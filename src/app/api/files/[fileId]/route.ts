@@ -10,7 +10,7 @@ import { logEvent, visitorLogFields } from "@/lib/log";
 import { isUuid } from "@/lib/uuid";
 
 /**
- * The address every "View" and "Download" link on the site points to
+ * The address every link to a paper's PDF on the site points to
  * (/api/files/<file id>). It never sends the PDF itself in production.
  * Instead, on every request it:
  *
@@ -30,9 +30,12 @@ import { isUuid } from "@/lib/uuid";
  * With local storage (development), which can't make presigned links,
  * the file is streamed through this route instead.
  *
- * `?dl=1` marks a Download (vs. View) click. Both are limited separately
- * (viewing has the larger allowance); the file opens the same way either
- * way, since its stored headers say "inline".
+ * The PDF always opens in the browser ("inline"), however it's reached --
+ * there is no separate download response; visitors save it from the
+ * browser's own PDF viewer. The only difference a link can make is which
+ * allowance it counts against: `?preview=1` (the preview box on a paper's
+ * page, which loads by itself on wide screens) has a larger one than
+ * opening a paper (everything else, e.g. "Open PDF").
  */
 
 type RouteContext = { params: Promise<{ fileId: string }> };
@@ -41,10 +44,12 @@ type RouteContext = { params: Promise<{ fileId: string }> };
 // itself may be stored by any shared cache in between.
 const NO_STORE = "private, no-store";
 
-function fileHeaders(file: { mime: string; title: string; bytes: number }, download: boolean): Record<string, string> {
+// The same headers R2 sends for a presigned link (see serving-headers.ts),
+// apart from caching.
+function fileHeaders(file: { mime: string; title: string; bytes: number }): Record<string, string> {
   return {
     "Content-Type": file.mime,
-    "Content-Disposition": contentDispositionHeader(download ? "attachment" : "inline", file.title),
+    "Content-Disposition": contentDispositionHeader("inline", file.title),
     "Content-Length": String(file.bytes),
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": NO_STORE,
@@ -64,8 +69,7 @@ function notFound(): NextResponse {
 export async function GET(request: NextRequest, { params }: RouteContext) {
   const startedAt = Date.now();
   const { fileId } = await params;
-  const download = request.nextUrl.searchParams.get("dl") === "1";
-  const bucket = download ? "download" : "view";
+  const bucket = request.nextUrl.searchParams.get("preview") === "1" ? "preview" : "open";
   const visitor = identifyVisitor(request.cookies.get(VISITOR_COOKIE)?.value, request.headers.get("x-forwarded-for"));
   const logFields = { fileId, kind: bucket, ...visitorLogFields(visitor, request.headers.get("user-agent")) };
 
@@ -116,7 +120,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
   return withVisitorCookie(
     new NextResponse(Readable.toWeb(stream) as ReadableStream<Uint8Array>, {
       status: 200,
-      headers: fileHeaders(file, download),
+      headers: fileHeaders(file),
     }),
     visitor
   );
@@ -128,11 +132,10 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
  * alone and never counts towards any limit -- so it also never hands out
  * a presigned link (that would be a way round the limit).
  */
-export async function HEAD(request: NextRequest, { params }: RouteContext) {
+export async function HEAD(_request: NextRequest, { params }: RouteContext) {
   const { fileId } = await params;
   if (!isUuid(fileId)) return new NextResponse(null, { status: 404 });
   const file = await getFileForDownload(fileId);
   if (!file) return new NextResponse(null, { status: 404 });
-  const download = request.nextUrl.searchParams.get("dl") === "1";
-  return new NextResponse(null, { status: 200, headers: fileHeaders(file, download) });
+  return new NextResponse(null, { status: 200, headers: fileHeaders(file) });
 }

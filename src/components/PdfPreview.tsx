@@ -8,7 +8,7 @@ import { useState, useSyncExternalStore } from "react";
  * away: most phone browsers can't show a PDF inside a page anyway (the box
  * just stays blank), yet the full file would still be downloaded --
  * costing the visitor their mobile data, and then again when they press
- * Download. On a wide screen (where previews do work) it loads straight
+ * Open PDF. On a wide screen (where previews do work) it loads straight
  * away, as before.
  *
  * Without JavaScript, the "Show preview" button is an ordinary link that
@@ -63,7 +63,7 @@ export function PdfPreview({ src, title, sizeLabel }: { src: string; title: stri
         Show preview ({sizeLabel})
       </a>
       <p className="hint" style={{ marginBottom: 0 }}>
-        Some phones can&apos;t show previews. If it stays blank, use Download or Open in new tab instead.
+        Some phones can&apos;t show previews. If it stays blank, use Open PDF instead.
       </p>
     </div>
   );

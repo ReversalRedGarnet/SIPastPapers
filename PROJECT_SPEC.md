@@ -60,7 +60,7 @@ Do not wait for 100% historical completeness. Release a coherent, explicitly lab
 
 1. Homepage: search bar + three primary selectors (exam level, year, subject).
 2. Results page: cards/table showing year, level, subject, artifact type, page count, verification status and actions.
-3. Document page: title, metadata, provenance, preview/viewer, download button, related artifacts, report-issue link.
+3. Document page: title, metadata, provenance, preview/viewer, open-PDF button (the PDF opens in the browser, which is where it can be saved — there is no separate forced-download response), related artifacts, report-issue link.
 4. Browse page: year matrix and subject matrix for users who do not know exactly what to search. *(Built as a click-through — series → year → subject → paper — rather than a matrix view; empty series/years are flagged with a "No papers yet" badge instead of shown as grid cells. The full year × subject coverage matrix is a CLI-only view — section 11.3.)*
 5. Collection page: overview of each exam family and its historical availability. *(Not built as a separate page — `/browse`'s exam-level → year → subject → paper click-through and the CLI's `coverage` matrix (section 11.3) serve this role instead.)*
 6. About page: project purpose, ownership, open-source link, rights statement, correction/takedown process.
@@ -141,7 +141,8 @@ download/view route) never depend on which one is active:
 File serving (`src/app/api/files/[fileId]/route.ts`) re-checks, on
 every request, that the paper is published, its rights are currently
 approved and unexpired, and the file is its current one (section 17.1
-invariant), applies the download rate limit, and then redirects (302,
+invariant), applies the rate limit (the in-page preview, `?preview=1`, has a
+larger allowance than opening a paper), and then redirects (302,
 `Cache-Control: private, no-store`) to a presigned R2 URL valid for 10
 minutes. R2 serves the bytes directly, with the headers stored on each
 object at ingest (`Content-Type`, `Content-Disposition: inline` with the
