@@ -311,17 +311,17 @@ test("R2Storage.presignedGetUrl refuses to run without a real R2 connection", as
   await assert.rejects(storageWith(createFakeS3Client()).presignedGetUrl("a.pdf", 60), /real R2 connection/);
 });
 
-test("R2Storage.move copies (keeping headers) then deletes, and never overwrites the destination", async () => {
+test("R2Storage.copy keeps the original and its headers, and never overwrites the destination", async () => {
   const fake = createFakeS3Client();
   const storage = storageWith(fake);
   await storage.put("archive/a.pdf", Buffer.from("%PDF-1.4\n%a\n"), SERVING);
   await storage.put("archive/taken.pdf", Buffer.from("%PDF-1.4\n%taken\n"));
 
-  await assert.rejects(storage.move("archive/a.pdf", "archive/taken.pdf"), StorageKeyExistsError);
-  assert.equal(await storage.exists("archive/a.pdf"), true, "nothing moved when the destination is taken");
+  await assert.rejects(storage.copy("archive/a.pdf", "archive/taken.pdf"), StorageKeyExistsError);
+  assert.equal((await storage.get("archive/taken.pdf"))!.toString(), "%PDF-1.4\n%taken\n");
 
-  await storage.move("archive/a.pdf", "quarantine/20261001T000000/archive/a.pdf");
-  assert.equal(await storage.exists("archive/a.pdf"), false);
+  await storage.copy("archive/a.pdf", "quarantine/20261001T000000/archive/a.pdf");
+  assert.equal(await storage.exists("archive/a.pdf"), true, "the original stays");
   const moved = await storage.describe("quarantine/20261001T000000/archive/a.pdf");
   assert.equal(moved?.contentDisposition, SERVING.contentDisposition, "stored headers travel with the file");
   assert.equal((await storage.get("quarantine/20261001T000000/archive/a.pdf"))!.toString(), "%PDF-1.4\n%a\n");

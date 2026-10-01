@@ -3,7 +3,7 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { query, queryOne, queryWithoutRetry, withTransaction } from "./client";
 import { listBrowseYears } from "@/lib/browse-years";
-import { getStorageProvider, StorageKeyExistsError } from "@/lib/storage";
+import { getStorageProvider, StorageKeyExistsError, type StorageProvider } from "@/lib/storage";
 import { buildStorageKey } from "@/lib/storage/types";
 import {
   artifactSlug,
@@ -319,8 +319,29 @@ const IS_CURRENT_FILE = `f.id = (
   limit 1
 )`;
 
-/** SQL: published, with rights currently approved -- the only papers whose files may be served. */
-const SERVABLE = `(a.status = 'published' and ${RIGHTS_CURRENTLY_APPROVED})`;
+/**
+ * Every key a file is moved to when its paper is unpublished starts with
+ * this (see quarantineKeyFor). Nothing stored under it is ever served.
+ */
+export const QUARANTINE_PREFIX = "quarantine/";
+
+/**
+ * SQL, for use inside a query on `artifacts a`: true when none of the
+ * paper's stored files is in quarantine. Publishing moves quarantined files
+ * back first, so a published paper never has one -- this makes sure that
+ * even if it somehow did, the paper is treated as not servable rather than
+ * served from quarantine.
+ */
+const NO_QUARANTINED_FILES = `not exists (
+  select 1 from files fq
+  where fq.artifact_id = a.id and starts_with(fq.storage_key, '${QUARANTINE_PREFIX}')
+)`;
+
+/**
+ * SQL: published, with rights currently approved and no file in
+ * quarantine -- the only papers whose files may be served.
+ */
+const SERVABLE = `(a.status = 'published' and ${RIGHTS_CURRENTLY_APPROVED} and ${NO_QUARANTINED_FILES})`;
 
 /**
  * SQL: everything the public may see -- servable papers, plus "not yet
@@ -1344,8 +1365,8 @@ export async function checkRightsGate(artifactId: string): Promise<RightsGateSta
   if (!rights.basis) missing.push("basis");
   if (!rights.approved_by) missing.push("approved_by");
   if (!rights.evidence_uri) missing.push("evidence_uri");
-  // Each entry reads as "what's missing", since that's how the CLI shows
-  // this list ("rights record is missing: ...").
+  // Each entry reads as "what's still needed", since that's how the CLI
+  // shows this list ("Cannot publish ... still needs: ...").
   if (!APPROVED_RIGHTS_STATUSES.includes(rights.rights_status)) {
     missing.push(`an approved rights_status (currently "${rights.rights_status}")`);
   }
@@ -1370,9 +1391,30 @@ export async function checkRightsGate(artifactId: string): Promise<RightsGateSta
 // as seen in scripts/cli.ts) before reading either field, which is exactly
 // what makes this safer than, say, returning a title that's sometimes an
 // empty string to mean failure.
+//
+// A paper published again after `unpublish` first has its file(s) moved
+// back from quarantine to their original key (filesRestored), so it's
+// never served from a quarantine key. If that can't be done, it isn't
+// published.
 export async function publishArtifact(
   artifactId: string
-): Promise<{ title: string } | { missing: string[] }> {
+): Promise<{ title: string; filesRestored: number } | { missing: string[] }> {
+  const current = await queryOne<{ status: ArtifactStatus }>("select status from artifacts where id = $1", [
+    artifactId,
+  ]);
+  if (!current) throw new Error(`Unknown artifact: ${artifactId}`);
+  // Checked here as well as below so a paper that can't be published
+  // anyway is refused before any stored file is moved.
+  if (current.status !== "published") {
+    const gate = await checkRightsGate(artifactId);
+    if (!gate.satisfied) return { missing: gate.missing };
+  }
+
+  const restore = await restoreQuarantinedFiles(artifactId);
+  if (restore.errors.length > 0) {
+    return { missing: restore.errors.map((e) => `its stored file back at its original key (${e})`) };
+  }
+
   // The rights check and the status change happen inside one transaction,
   // so the check can't go stale between being made and acted on.
   return withTransaction(async () => {
@@ -1383,10 +1425,24 @@ export async function publishArtifact(
       [artifactId]
     );
     if (!artifact) throw new Error(`Unknown artifact: ${artifactId}`);
-    if (artifact.status === "published") return { title: artifact.title };
+    if (artifact.status === "published") return { title: artifact.title, filesRestored: restore.restored };
 
     const gate = await checkRightsGate(artifactId);
     if (!gate.satisfied) return { missing: gate.missing };
+
+    // Never publish a paper whose current file isn't actually stored where
+    // its record says (e.g. purged), or is still in quarantine.
+    const file = await queryOne<{ storage_key: string }>(
+      "select storage_key from files where artifact_id = $1 order by created_at desc, id desc limit 1",
+      [artifactId]
+    );
+    if (!file) return { missing: ["a stored file (none is recorded)"] };
+    if (file.storage_key.startsWith(QUARANTINE_PREFIX)) {
+      return { missing: [`its stored file out of quarantine (still at ${file.storage_key})`] };
+    }
+    if (!(await getStorageProvider().exists(file.storage_key))) {
+      return { missing: [`its stored file (nothing is stored at ${file.storage_key})`] };
+    }
 
     const now = new Date().toISOString();
     await query("update artifacts set status = 'published', published_at = $1 where id = $2", [
@@ -1397,10 +1453,10 @@ export async function publishArtifact(
     await query(
       `insert into audit_events (id, actor_id, event_type, object_type, object_id, metadata)
        values ($1, null, 'artifact_published', 'artifact', $2, $3)`,
-      [randomUUID(), artifactId, JSON.stringify({})]
+      [randomUUID(), artifactId, JSON.stringify({ filesRestored: restore.restored })]
     );
 
-    return { title: artifact.title };
+    return { title: artifact.title, filesRestored: restore.restored };
   });
 }
 
@@ -1441,58 +1497,307 @@ export async function unpublishArtifact(
 export interface QuarantineResult {
   /** How many stored files were moved to a quarantine key. */
   filesMoved: number;
-  /** One message per file that couldn't be moved (the paper is unpublished regardless). */
+  /**
+   * One message per file that couldn't be fully moved (the paper is
+   * unpublished regardless). Either way the file record still points at a
+   * key that exists; links to the old key keep working until they expire.
+   */
   moveErrors: string[];
 }
 
 /**
  * The key a file is moved to when its paper is unpublished:
  * "quarantine/<UTC timestamp>/<original key>". The timestamp makes every
- * unpublish use a fresh key -- so unpublishing a paper that was published
- * again from quarantine still cuts off links to its current key.
+ * unpublish use a fresh key, so a file is never refused for its
+ * quarantine key already being taken by an earlier unpublish.
  */
 export function quarantineKeyFor(storageKey: string, now: Date = new Date()): string {
-  const originalKey = storageKey.replace(/^quarantine\/[^/]+\//, "");
   // e.g. "2026-10-01T11:53:59.123Z" -> "20261001T115359"
   const stamp = now.toISOString().replace(/[-:]/g, "").slice(0, 15);
-  return `quarantine/${stamp}/${originalKey}`;
+  return `${QUARANTINE_PREFIX}${stamp}/${originalKeyFor(storageKey)}`;
+}
+
+/** The key a quarantined file came from (and goes back to if its paper is published again). Any other key is returned unchanged. */
+export function originalKeyFor(storageKey: string): string {
+  return storageKey.startsWith(QUARANTINE_PREFIX) ? storageKey.replace(/^quarantine\/[^/]+\//, "") : storageKey;
+}
+
+/** One stored file being moved to a new key -- see relocateStoredFile. */
+export interface FileRelocation {
+  fileId: string;
+  artifactId: string;
+  fromKey: string;
+  toKey: string;
+  /** The fingerprint recorded for the file, to recognise an identical copy already at `toKey`. */
+  sha256: string;
+  /** What audit_events records the move as. */
+  eventType: "file_quarantined" | "file_restored";
+}
+
+export type RelocationOutcome =
+  /** The file record now points at `toKey`. `leftoverKey`: the old copy, if it couldn't be deleted. */
+  | { moved: true; leftoverKey: string | null; note?: string }
+  /** The file record still points at a key that exists (`fromKey`, unless the error says otherwise). */
+  | { moved: false; error: string };
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Points a file record at its new key and logs it -- only if the record still points at the old key. */
+async function recordFileRelocation(move: FileRelocation): Promise<void> {
+  await withTransaction(async () => {
+    const updated = await query(
+      "update files set storage_key = $1 where id = $2 and storage_key = $3 returning id",
+      [move.toKey, move.fileId, move.fromKey]
+    );
+    if (updated.length !== 1) throw new Error(`file ${move.fileId} no longer points at ${move.fromKey}`);
+    await query(
+      `insert into audit_events (id, actor_id, event_type, object_type, object_id, metadata)
+       values ($1, null, $2, 'artifact', $3, $4)`,
+      [
+        randomUUID(),
+        move.eventType,
+        move.artifactId,
+        JSON.stringify({ fileId: move.fileId, from: move.fromKey, to: move.toKey }),
+      ]
+    );
+  });
 }
 
 /**
- * Moves every stored file of an (already unpublished) paper to a
- * quarantine key, and points its file records there. Download links are
- * tied to a file's key, so this makes every link already handed out stop
- * working immediately -- the "instant revoke". Nothing is deleted: the
- * bytes are kept, each move is logged in audit_events, and if the paper is
- * published again it's simply served from its quarantine key.
+ * Moves one stored file to a new key and points its file record there, in
+ * an order that keeps the record pointing at a key that exists at every
+ * moment -- even if the process dies part-way:
+ *   1. copy the file to the new key (the old copy is untouched);
+ *   2. repoint the record (only if it still points at the old key) and log
+ *      it, in one transaction;
+ *   3. only then delete the old copy.
+ * If step 2 fails, the record is read back to see which key it holds: still
+ * the old one -> the new copy is removed again, as if nothing happened; the
+ * new one (the commit went through after all) -> carry on with step 3;
+ * can't tell -> both copies are left in place, which is always safe. If
+ * step 3 fails, the record already points at the new key and the old copy
+ * is reported as left over.
+ *
+ * Running it again after a failure is safe: an identical copy (same
+ * sha256) already at the new key is used as-is.
+ *
+ * `recordMove` is step 2; only tests pass anything else, to make it fail.
+ */
+export async function relocateStoredFile(
+  storage: StorageProvider,
+  move: FileRelocation,
+  recordMove: (move: FileRelocation) => Promise<void> = recordFileRelocation
+): Promise<RelocationOutcome> {
+  let createdCopy = true;
+  try {
+    await storage.copy(move.fromKey, move.toKey);
+  } catch (err) {
+    if (!(err instanceof StorageKeyExistsError)) {
+      return { moved: false, error: `copying it to ${move.toKey} failed: ${errorText(err)}` };
+    }
+    const existing = await storage.get(move.toKey);
+    if (!existing || sha256Hex(existing) !== move.sha256) {
+      return { moved: false, error: `a different file is already stored at ${move.toKey}` };
+    }
+    createdCopy = false; // left by an earlier attempt -- same bytes, so use it
+  }
+
+  try {
+    await recordMove(move);
+  } catch (err) {
+    const recordedKey = await queryOne<{ storage_key: string }>("select storage_key from files where id = $1", [
+      move.fileId,
+    ])
+      .then((row) => row?.storage_key)
+      .catch(() => undefined);
+    if (recordedKey !== move.toKey) {
+      if (recordedKey === move.fromKey && createdCopy) await storage.delete(move.toKey).catch(() => {});
+      return {
+        moved: false,
+        error:
+          `updating its file record failed (${errorText(err)}); the record still points at ` +
+          (recordedKey ?? `an unknown key -- check files.id ${move.fileId}`),
+      };
+    }
+  }
+
+  try {
+    await storage.delete(move.fromKey);
+  } catch (err) {
+    return { moved: true, leftoverKey: move.fromKey, note: `the old copy couldn't be deleted: ${errorText(err)}` };
+  }
+  return { moved: true, leftoverKey: null };
+}
+
+/**
+ * Moves every stored file of an (already unpublished) paper that isn't
+ * already there to a quarantine key, and points its file records there.
+ * Download links are tied to a file's key, so this makes every link
+ * already handed out stop working immediately -- the "instant revoke".
+ * Nothing is deleted (see purgeArtifactFiles for that): the bytes are kept,
+ * each move is logged in audit_events, and publishing the paper again moves
+ * them back to their original keys.
  */
 async function quarantineArtifactFiles(artifactId: string): Promise<QuarantineResult> {
   const storage = getStorageProvider();
-  if (!storage.move) return { filesMoved: 0, moveErrors: [] };
-
-  const files = await query<{ id: string; storage_key: string }>(
-    "select id, storage_key from files where artifact_id = $1",
-    [artifactId]
+  const files = await query<{ id: string; storage_key: string; sha256: string }>(
+    "select id, storage_key, sha256 from files where artifact_id = $1 and not starts_with(storage_key, $2)",
+    [artifactId, QUARANTINE_PREFIX]
   );
   let filesMoved = 0;
   const moveErrors: string[] = [];
   for (const file of files) {
-    const toKey = quarantineKeyFor(file.storage_key);
-    try {
-      await storage.move(file.storage_key, toKey);
-    } catch (err) {
-      moveErrors.push(`${file.storage_key}: ${err instanceof Error ? err.message : String(err)}`);
+    const outcome = await relocateStoredFile(storage, {
+      fileId: file.id,
+      artifactId,
+      fromKey: file.storage_key,
+      toKey: quarantineKeyFor(file.storage_key),
+      sha256: file.sha256,
+      eventType: "file_quarantined",
+    });
+    if (!outcome.moved) {
+      moveErrors.push(`${file.storage_key}: ${outcome.error}`);
       continue;
     }
-    await withTransaction(async () => {
-      await query("update files set storage_key = $1 where id = $2", [toKey, file.id]);
-      await query(
-        `insert into audit_events (id, actor_id, event_type, object_type, object_id, metadata)
-         values ($1, null, 'file_quarantined', 'artifact', $2, $3)`,
-        [randomUUID(), artifactId, JSON.stringify({ fileId: file.id, from: file.storage_key, to: toKey })]
-      );
-    });
     filesMoved++;
+    if (outcome.leftoverKey) moveErrors.push(`${file.storage_key}: quarantined, but ${outcome.note}`);
   }
   return { filesMoved, moveErrors };
+}
+
+/**
+ * Moves a paper's quarantined files back to their original keys -- the
+ * first step of publishing it again (see publishArtifact). A quarantine
+ * copy that can't be deleted afterwards is harmless (nothing points at it,
+ * and nothing under quarantine/ is ever served), so only failures to move
+ * a file back count as errors.
+ */
+async function restoreQuarantinedFiles(artifactId: string): Promise<{ restored: number; errors: string[] }> {
+  const files = await query<{ id: string; storage_key: string; sha256: string }>(
+    "select id, storage_key, sha256 from files where artifact_id = $1 and starts_with(storage_key, $2)",
+    [artifactId, QUARANTINE_PREFIX]
+  );
+  if (files.length === 0) return { restored: 0, errors: [] };
+
+  const storage = getStorageProvider();
+  let restored = 0;
+  const errors: string[] = [];
+  for (const file of files) {
+    const outcome = await relocateStoredFile(storage, {
+      fileId: file.id,
+      artifactId,
+      fromKey: file.storage_key,
+      toKey: originalKeyFor(file.storage_key),
+      sha256: file.sha256,
+      eventType: "file_restored",
+    });
+    if (outcome.moved) restored++;
+    else errors.push(`${file.storage_key}: ${outcome.error}`);
+  }
+  return { restored, errors };
+}
+
+/** A paper's status, or undefined if there's no such paper. */
+export async function getArtifactStatus(artifactId: string): Promise<ArtifactStatus | undefined> {
+  const row = await queryOne<{ status: ArtifactStatus }>("select status from artifacts where id = $1", [artifactId]);
+  return row?.status;
+}
+
+export interface PurgeCandidate {
+  fileId: string;
+  storageKey: string;
+  bytes: number;
+}
+
+/**
+ * The first half of `unpublish --purge`, for a paper that's already
+ * unpublished (unpublishArtifact does this itself for a published one):
+ * quarantines any of its files that aren't yet, and lists every
+ * quarantined file -- what purgeArtifactFiles would permanently delete.
+ */
+export async function prepareArtifactPurge(
+  artifactId: string
+): Promise<{ title: string; quarantine: QuarantineResult; files: PurgeCandidate[] }> {
+  const artifact = await queryOne<{ title: string; status: ArtifactStatus }>(
+    "select title, status from artifacts where id = $1",
+    [artifactId]
+  );
+  if (!artifact) throw new Error(`Unknown artifact: ${artifactId}`);
+  if (artifact.status === "published") {
+    throw new Error(`Artifact ${artifactId} is published -- unpublish it before purging its files.`);
+  }
+  const quarantine = await quarantineArtifactFiles(artifactId);
+  const files = await query<{ id: string; storage_key: string; bytes: string }>(
+    `select id, storage_key, bytes from files
+     where artifact_id = $1 and starts_with(storage_key, $2) order by storage_key`,
+    [artifactId, QUARANTINE_PREFIX]
+  );
+  return {
+    title: artifact.title,
+    quarantine,
+    files: files.map((f) => ({ fileId: f.id, storageKey: f.storage_key, bytes: Number(f.bytes) })),
+  };
+}
+
+/**
+ * Permanently deletes an unpublished paper's quarantined files -- the
+ * second half of `unpublish --purge --confirm`. Each file is deleted from
+ * storage, its file record removed and a `file_purged` audit event
+ * (keeping its key, sha256, size and type) written, with the paper's row
+ * locked so it can't be published again part-way. Only quarantined files
+ * of a paper that isn't published are ever touched. Once purged, the paper
+ * can't be published again (it has no file) unless re-ingested.
+ */
+export async function purgeArtifactFiles(
+  artifactId: string,
+  reason: string | null = null
+): Promise<{ purged: PurgeCandidate[]; errors: string[] }> {
+  const storage = getStorageProvider();
+  const candidates = await query<{ id: string }>(
+    "select id from files where artifact_id = $1 and starts_with(storage_key, $2) order by storage_key",
+    [artifactId, QUARANTINE_PREFIX]
+  );
+  const purged: PurgeCandidate[] = [];
+  const errors: string[] = [];
+  for (const { id } of candidates) {
+    try {
+      const done = await withTransaction(async () => {
+        const artifact = await queryOne<{ status: ArtifactStatus }>(
+          "select status from artifacts where id = $1 for update",
+          [artifactId]
+        );
+        if (artifact?.status === "published") throw new Error("the paper has been published again");
+        const file = await queryOne<{ storage_key: string; sha256: string; mime: string; bytes: string }>(
+          "select storage_key, sha256, mime, bytes from files where id = $1 for update",
+          [id]
+        );
+        if (!file || !file.storage_key.startsWith(QUARANTINE_PREFIX)) return null; // moved since -- leave it
+        await storage.delete(file.storage_key);
+        await query("delete from files where id = $1", [id]);
+        await query(
+          `insert into audit_events (id, actor_id, event_type, object_type, object_id, metadata)
+           values ($1, null, 'file_purged', 'artifact', $2, $3)`,
+          [
+            randomUUID(),
+            artifactId,
+            JSON.stringify({
+              fileId: id,
+              key: file.storage_key,
+              sha256: file.sha256,
+              mime: file.mime,
+              bytes: Number(file.bytes),
+              reason,
+            }),
+          ]
+        );
+        return { fileId: id, storageKey: file.storage_key, bytes: Number(file.bytes) };
+      });
+      if (done) purged.push(done);
+    } catch (err) {
+      errors.push(`file ${id}: ${errorText(err)}`);
+    }
+  }
+  return { purged, errors };
 }

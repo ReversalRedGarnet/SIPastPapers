@@ -156,7 +156,19 @@ valid until it expires — at most 10 minutes. For an instant takedown,
 `unpublish` also moves the paper's stored file(s) to
 `quarantine/<UTC timestamp>/<original key>` (bytes kept, logged as
 `file_quarantined` in `audit_events`), which invalidates such links
-immediately; a paper published again is served from its quarantine key.
+immediately. Nothing under `quarantine/` is ever served: a paper with any
+quarantined file is treated as not servable by every public read (file
+route, year zip, pages, sitemap). Publishing a paper again first moves
+its files back to their original keys (`file_restored`), and refuses if
+that fails. `unpublish --purge --confirm` permanently deletes a
+withdrawn paper's quarantined files (`file_purged`, keeping key, sha256
+and size).
+
+Every such move is copy → repoint the `files` row (only if it still
+holds the old key) → delete the old copy, so a `files` row never points
+at a key that doesn't exist, even if a step fails or the process dies
+part-way (`relocateStoredFile` in `src/lib/db/queries.ts`). Publishing
+also refuses a paper whose current file isn't actually in storage.
 
 ### 5.2 Storage layout
 
@@ -427,6 +439,15 @@ unpublish <artifact-id> [--status withdrawn|rights_hold] [--reason <text>]
     action. New command — publishing was previously one-directional.
     Also moves the artifact's stored file(s) to a quarantine key (section
     5.1), so download links already handed out stop working at once.
+    Publishing it again moves them back.
+
+unpublish <artifact-id> --purge [--confirm] [--reason <text>]
+
+    Unpublishes (or, if already unpublished, makes sure every file is in
+    quarantine), then lists the quarantined files that would be
+    permanently deleted. Only with --confirm are they deleted, each
+    logged as `file_purged`. A purged paper can't be published again
+    unless re-ingested.
 
 list
 

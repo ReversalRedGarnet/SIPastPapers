@@ -1,4 +1,4 @@
-import { createReadStream, promises as fs } from "node:fs";
+import { constants as fsConstants, createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { StorageKeyExistsError, type PutResult, type StorageProvider } from "./types";
@@ -100,11 +100,16 @@ export class LocalFilesystemStorage implements StorageProvider {
     await fs.rm(this.resolve(key), { force: true });
   }
 
-  async move(fromKey: string, toKey: string): Promise<void> {
-    if (await this.exists(toKey)) throw new StorageKeyExistsError(toKey);
+  async copy(fromKey: string, toKey: string): Promise<void> {
     const dest = this.resolve(toKey);
     await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.rename(this.resolve(fromKey), dest);
+    try {
+      // COPYFILE_EXCL: fail rather than replace an existing file.
+      await fs.copyFile(this.resolve(fromKey), dest, fsConstants.COPYFILE_EXCL);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") throw new StorageKeyExistsError(toKey);
+      throw err;
+    }
   }
 
   locate(key: string): string {

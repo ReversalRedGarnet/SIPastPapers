@@ -18,18 +18,23 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import {
   approveRights,
+  getArtifactStatus,
   getCoverageMatrix,
   ingestArtifact,
   listAllArtifacts,
   listPublishedRightsExpiring,
   listPublishedWithUnapprovedRights,
   listStoredFiles,
+  prepareArtifactPurge,
   publishArtifact,
+  purgeArtifactFiles,
   unpublishArtifact,
   type CoverageCell,
   type CoverageStatus,
+  type QuarantineResult,
   type StoredFile,
 } from "@/lib/db/queries";
+import { formatBytes } from "@/lib/format";
 import { artifactTypeSlug, generateDownloadFilename } from "@/lib/artifact-naming";
 import { pdfServingHeaders, type ServingHeaders } from "@/lib/storage/serving-headers";
 import { getStorageProvider } from "@/lib/storage";
@@ -440,27 +445,23 @@ async function runPublish(args: ParsedArgs): Promise<void> {
 
   const result = await publishArtifact(artifactId);
   if ("missing" in result) {
-    console.error(`Cannot publish ${artifactId} — rights record is missing: ${result.missing.join(", ")}`);
-    console.error(`Run "approve-rights ${artifactId} --basis ... --approved-by ... --evidence-uri ..." first.`);
+    console.error(`Cannot publish ${artifactId} — still needs:`);
+    result.missing.forEach((m) => console.error(`  - ${m}`));
+    console.error(
+      `Rights details are filled in with "approve-rights ${artifactId} --basis ... --approved-by ... --evidence-uri ...".`
+    );
     process.exitCode = 1;
     return;
+  }
+  if (result.filesRestored > 0) {
+    console.log(`Moved ${result.filesRestored} stored file(s) back from quarantine to their original key.`);
   }
   console.log(`Published "${result.title}" (${artifactId}).`);
 }
 
 const UNPUBLISH_STATUS_CHOICES: ArtifactStatus[] = ["withdrawn", "rights_hold"];
 
-async function runUnpublish(args: ParsedArgs): Promise<void> {
-  const artifactId = args.positional[0];
-  if (!artifactId) fail("Usage: unpublish <artifact-id> [--status withdrawn|rights_hold] [--reason <text>]");
-
-  const status = (args.flags.status ?? "withdrawn") as ArtifactStatus;
-  if (!UNPUBLISH_STATUS_CHOICES.includes(status)) {
-    fail(`--status must be one of ${UNPUBLISH_STATUS_CHOICES.join(", ")}`);
-  }
-
-  const result = await unpublishArtifact(artifactId, status as "withdrawn" | "rights_hold", args.flags.reason ?? null);
-  console.log(`Unpublished "${result.title}" (${artifactId}) -> ${status}.`);
+function printQuarantineResult(result: QuarantineResult): void {
   if (result.filesMoved > 0) {
     console.log(
       `Moved ${result.filesMoved} stored file(s) to quarantine -- download links already handed out stop working now.`
@@ -468,10 +469,71 @@ async function runUnpublish(args: ParsedArgs): Promise<void> {
   }
   if (result.moveErrors.length > 0) {
     console.error(
-      `WARNING: couldn't move ${result.moveErrors.length} stored file(s). The paper is unpublished and the site no` +
-        `\nlonger hands it out, but a link handed out in the last 10 minutes can keep working until it expires:`
+      `WARNING: couldn't fully move ${result.moveErrors.length} stored file(s). The paper is unpublished and the site` +
+        `\nno longer hands it out, but a link handed out in the last 10 minutes can keep working until it expires:`
     );
     result.moveErrors.forEach((e) => console.error(`  ${e}`));
+    process.exitCode = 1;
+  }
+}
+
+const UNPUBLISH_USAGE =
+  "Usage: unpublish <artifact-id> [--status withdrawn|rights_hold] [--reason <text>] [--purge [--confirm]]";
+
+async function runUnpublish(args: ParsedArgs): Promise<void> {
+  const artifactId = args.positional[0];
+  if (!artifactId) fail(UNPUBLISH_USAGE);
+  const purge = args.flags.purge === "true";
+  if (args.flags.confirm && !purge) fail(`--confirm only applies to --purge.\n${UNPUBLISH_USAGE}`);
+  const reason = args.flags.reason ?? null;
+
+  const status = (args.flags.status ?? "withdrawn") as ArtifactStatus;
+  if (!UNPUBLISH_STATUS_CHOICES.includes(status)) {
+    fail(`--status must be one of ${UNPUBLISH_STATUS_CHOICES.join(", ")}`);
+  }
+
+  // With --purge, a paper that's already unpublished just goes on to the
+  // purge step; without it, unpublishing it again is an error.
+  if (!purge || (await getArtifactStatus(artifactId)) === "published") {
+    const result = await unpublishArtifact(artifactId, status as "withdrawn" | "rights_hold", reason);
+    console.log(`Unpublished "${result.title}" (${artifactId}) -> ${status}.`);
+    printQuarantineResult(result);
+  }
+  if (purge) await runPurge(artifactId, args.flags.confirm === "true", reason);
+}
+
+/**
+ * `unpublish --purge`: makes sure every file of the (now unpublished) paper
+ * is in quarantine, then lists what would be permanently deleted -- and,
+ * only with --confirm, deletes it (audit-logged as file_purged).
+ */
+async function runPurge(artifactId: string, confirm: boolean, reason: string | null): Promise<void> {
+  const plan = await prepareArtifactPurge(artifactId);
+  printQuarantineResult(plan.quarantine);
+  if (plan.quarantine.moveErrors.length > 0) {
+    console.error("\nNot purging: fix the files above first (they're not all in quarantine).");
+    return;
+  }
+  if (plan.files.length === 0) {
+    console.log(`\n"${plan.title}" has no stored files in quarantine -- nothing to purge.`);
+    return;
+  }
+
+  console.log(`\n${confirm ? "Permanently deleting" : "Would permanently delete"} ${plan.files.length} file(s):`);
+  plan.files.forEach((f) => console.log(`  ${f.storageKey}  (${formatBytes(f.bytes)})`));
+  if (!confirm) {
+    console.log(
+      `\nDry run -- nothing deleted (the file(s) stay in quarantine, recoverable by publishing again).` +
+        `\nTo delete permanently: unpublish ${artifactId} --purge --confirm`
+    );
+    return;
+  }
+
+  const result = await purgeArtifactFiles(artifactId, reason);
+  console.log(`\nPurged ${result.purged.length} file(s). Each is logged in audit_events as file_purged.`);
+  if (result.errors.length > 0) {
+    console.error(`WARNING: ${result.errors.length} file(s) not purged:`);
+    result.errors.forEach((e) => console.error(`  ${e}`));
     process.exitCode = 1;
   }
 }
@@ -848,7 +910,9 @@ Commands:
   publish <artifact-id>
       Mark an artifact published. Refuses (and prints what's missing) if
       its rights record does not yet have basis, approved_by and
-      evidence_uri all set.
+      evidence_uri all set, or its stored file isn't there. A paper that
+      was unpublished has its file moved back from quarantine to its
+      original key first.
 
   publish --series <code> --year-range <yyyy-yyyy> [--confirm]
       Bulk form of publish: publishes every artifact in one exam series
@@ -864,6 +928,14 @@ Commands:
       stored file(s) to quarantine/<timestamp>/<original key> (bytes kept,
       logged), so any download link already handed out stops working
       immediately rather than when it expires (up to 10 minutes).
+      Publishing it again moves the file(s) back.
+
+  unpublish <artifact-id> --purge [--confirm] [--reason <text>]
+      As above (or, for a paper that's already unpublished, just makes sure
+      its files are in quarantine), then lists the quarantined files that
+      would be PERMANENTLY deleted. Only with --confirm are they deleted --
+      each logged in audit_events as file_purged with its key, sha256 and
+      size. A purged paper can't be published again unless re-ingested.
 
   list
       List every artifact with its id, status and rights status.

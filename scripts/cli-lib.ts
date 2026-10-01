@@ -383,7 +383,7 @@ export async function executeBulkPublish(
     const result = await publishArtifact(artifact.id);
     if ("missing" in result) {
       onProgress(
-        `Failed to publish ${artifact.id} (${artifact.title}): rights record missing ${result.missing.join(", ")}`,
+        `Failed to publish ${artifact.id} (${artifact.title}): still needs ${result.missing.join("; ")}`,
         "error"
       );
       failed++;

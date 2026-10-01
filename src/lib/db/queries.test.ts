@@ -22,7 +22,8 @@ import path from "node:path";
 import { loadTestDatabaseEnv } from "./test-database-env";
 import { query, queryOne, withRolledBackTransaction, closePool } from "./client";
 import { artifactSlug } from "@/lib/artifact-naming";
-import type { CoverageCell } from "@/lib/db/queries";
+import type { CoverageCell, FileRelocation } from "@/lib/db/queries";
+import type { StorageProvider } from "@/lib/storage";
 
 let queries: typeof import("@/lib/db/queries");
 let getStorageProvider: typeof import("@/lib/storage").getStorageProvider;
@@ -637,9 +638,202 @@ test("unpublish moves the paper's file to quarantine (instant revoke), keeps the
       [paper.artifactId]
     );
     assert.deepEqual(event.metadata, { fileId: before.id, from: before.storage_key, to: after.storage_key });
+  });
+});
 
-    // Published again later, it's simply served from its quarantine key.
-    await queries.publishArtifact(paper.artifactId);
-    assert.equal((await queries.getFileForDownload(before.id))?.storageKey, after.storage_key);
+test("publishing again moves the file back from quarantine to its original key, and logs it", async () => {
+  await withRolledBackTransaction(async () => {
+    const paper = await publishTestPaper("14");
+    const [file] = await query<{ id: string; storage_key: string }>(
+      "select id, storage_key from files where artifact_id = $1",
+      [paper.artifactId]
+    );
+    await queries.unpublishArtifact(paper.artifactId, "withdrawn", "test");
+    const [quarantined] = await query<{ storage_key: string }>("select storage_key from files where id = $1", [file.id]);
+
+    const result = await queries.publishArtifact(paper.artifactId);
+    assert.ok(!("missing" in result));
+    assert.equal(result.filesRestored, 1);
+
+    const [restored] = await query<{ storage_key: string }>("select storage_key from files where id = $1", [file.id]);
+    assert.equal(restored.storage_key, file.storage_key, "back at the original key");
+    assert.equal(await getStorageProvider().exists(file.storage_key), true);
+    assert.equal(await getStorageProvider().exists(quarantined.storage_key), false, "the quarantine copy is gone");
+    assert.equal((await queries.getFileForDownload(file.id))?.storageKey, file.storage_key);
+
+    const [event] = await query<{ metadata: unknown }>(
+      "select metadata from audit_events where object_id = $1 and event_type = 'file_restored'",
+      [paper.artifactId]
+    );
+    assert.deepEqual(event.metadata, { fileId: file.id, from: quarantined.storage_key, to: file.storage_key });
+  });
+});
+
+/**
+ * The real storage, with some of its methods swapped out -- to make one
+ * step of a file move fail on purpose. Object.create keeps every other
+ * method (and the real storage's settings) working as normal.
+ */
+function storageWith(overrides: Partial<StorageProvider>): StorageProvider {
+  return Object.assign(Object.create(getStorageProvider()), overrides);
+}
+
+/** A published test paper's file, set up for a move to a quarantine key. */
+async function relocationFor(paperNo: string): Promise<FileRelocation> {
+  const paper = await publishTestPaper(paperNo);
+  const [file] = await query<{ id: string; storage_key: string; sha256: string }>(
+    "select id, storage_key, sha256 from files where artifact_id = $1",
+    [paper.artifactId]
+  );
+  return {
+    fileId: file.id,
+    artifactId: paper.artifactId,
+    fromKey: file.storage_key,
+    toKey: queries.quarantineKeyFor(file.storage_key),
+    sha256: file.sha256,
+    eventType: "file_quarantined",
+  };
+}
+
+async function recordedKey(fileId: string): Promise<string> {
+  const [row] = await query<{ storage_key: string }>("select storage_key from files where id = $1", [fileId]);
+  return row.storage_key;
+}
+
+test("a file move whose database update fails leaves the record on the original key, which still exists", async () => {
+  await withRolledBackTransaction(async () => {
+    const move = await relocationFor("15");
+    const outcome = await queries.relocateStoredFile(getStorageProvider(), move, async () => {
+      throw new Error("simulated database failure");
+    });
+
+    assert.equal(outcome.moved, false);
+    assert.equal(await recordedKey(move.fileId), move.fromKey);
+    assert.equal(await getStorageProvider().exists(move.fromKey), true, "the key the record points at still exists");
+    assert.equal(await getStorageProvider().exists(move.toKey), false, "the half-made copy is cleaned up");
+  });
+});
+
+test("a file move whose copy fails changes nothing", async () => {
+  await withRolledBackTransaction(async () => {
+    const move = await relocationFor("16");
+    const storage = storageWith({
+      copy: async () => {
+        throw new Error("simulated storage failure");
+      },
+    });
+    const outcome = await queries.relocateStoredFile(storage, move);
+
+    assert.equal(outcome.moved, false);
+    assert.equal(await recordedKey(move.fileId), move.fromKey);
+    assert.equal(await getStorageProvider().exists(move.fromKey), true);
+  });
+});
+
+test("a file move whose final delete fails still points the record at the new key, which exists; retrying is safe", async () => {
+  await withRolledBackTransaction(async () => {
+    const move = await relocationFor("17");
+    const storage = storageWith({
+      delete: async () => {
+        throw new Error("simulated storage failure");
+      },
+    });
+    const outcome = await queries.relocateStoredFile(storage, move);
+
+    assert.deepEqual(outcome, {
+      moved: true,
+      leftoverKey: move.fromKey,
+      note: "the old copy couldn't be deleted: simulated storage failure",
+    });
+    assert.equal(await recordedKey(move.fileId), move.toKey);
+    assert.equal(await getStorageProvider().exists(move.toKey), true, "the key the record points at exists");
+
+    // Moving it back (as publishing again does) reuses the identical copy
+    // still sitting at the original key instead of refusing.
+    const back = await queries.relocateStoredFile(getStorageProvider(), {
+      ...move,
+      fromKey: move.toKey,
+      toKey: move.fromKey,
+      eventType: "file_restored",
+    });
+    assert.deepEqual(back, { moved: true, leftoverKey: null });
+    assert.equal(await recordedKey(move.fileId), move.fromKey);
+    assert.equal(await getStorageProvider().exists(move.toKey), false);
+  });
+});
+
+test("publishing again is refused -- and nothing is served -- if the file can't be moved back from quarantine", async () => {
+  await withRolledBackTransaction(async () => {
+    const paper = await publishTestPaper("18");
+    const [file] = await query<{ id: string; storage_key: string }>(
+      "select id, storage_key from files where artifact_id = $1",
+      [paper.artifactId]
+    );
+    await queries.unpublishArtifact(paper.artifactId, "withdrawn", "test");
+    const quarantinedKey = await recordedKey(file.id);
+    // Something different now occupies the original key.
+    await getStorageProvider().put(file.storage_key, Buffer.from("%PDF-1.4\n%something else\n"));
+
+    const result = await queries.publishArtifact(paper.artifactId);
+    assert.ok("missing" in result && result.missing[0].includes("a different file is already stored at"));
+    assert.equal((await queries.getArtifactStatus(paper.artifactId)), "withdrawn", "not published");
+    assert.equal(await recordedKey(file.id), quarantinedKey, "still points at its quarantine copy");
+    assert.equal(await getStorageProvider().exists(quarantinedKey), true);
+    assert.deepEqual(await paper.visibility(), paper.nowhere);
+  });
+});
+
+test("purge permanently deletes only an unpublished paper's quarantined files, logs each one, and blocks republishing", async () => {
+  await withRolledBackTransaction(async () => {
+    const paper = await publishTestPaper("19");
+    const [file] = await query<{ id: string; storage_key: string; sha256: string }>(
+      "select id, storage_key, sha256 from files where artifact_id = $1",
+      [paper.artifactId]
+    );
+    await assert.rejects(queries.prepareArtifactPurge(paper.artifactId), /is published/);
+
+    await queries.unpublishArtifact(paper.artifactId, "withdrawn", "test");
+    const plan = await queries.prepareArtifactPurge(paper.artifactId);
+    assert.equal(plan.files.length, 1);
+    const quarantinedKey = plan.files[0].storageKey;
+    assert.ok(quarantinedKey.startsWith(queries.QUARANTINE_PREFIX));
+    assert.equal(await getStorageProvider().exists(quarantinedKey), true, "preparing deletes nothing");
+
+    const result = await queries.purgeArtifactFiles(paper.artifactId, "test purge");
+    assert.deepEqual(result.errors, []);
+    assert.deepEqual(
+      result.purged.map((p) => p.storageKey),
+      [quarantinedKey]
+    );
+    assert.equal(await getStorageProvider().exists(quarantinedKey), false);
+    assert.equal((await query("select 1 from files where id = $1", [file.id])).length, 0);
+
+    const [event] = await query<{ metadata: Record<string, unknown> }>(
+      "select metadata from audit_events where object_id = $1 and event_type = 'file_purged'",
+      [paper.artifactId]
+    );
+    assert.equal(event.metadata.key, quarantinedKey);
+    assert.equal(event.metadata.sha256, file.sha256);
+    assert.equal(event.metadata.reason, "test purge");
+
+    const again = await queries.publishArtifact(paper.artifactId);
+    assert.ok("missing" in again && again.missing.includes("a stored file (none is recorded)"));
+  });
+});
+
+test("unpublish quarantines a file still left at its original key by an earlier failed move, before purge lists it", async () => {
+  await withRolledBackTransaction(async () => {
+    const paper = await publishTestPaper("20");
+    const [file] = await query<{ id: string; storage_key: string }>(
+      "select id, storage_key from files where artifact_id = $1",
+      [paper.artifactId]
+    );
+    // Unpublished without its file being moved (as if the move had failed).
+    await query("update artifacts set status = 'withdrawn' where id = $1", [paper.artifactId]);
+
+    const plan = await queries.prepareArtifactPurge(paper.artifactId);
+    assert.equal(plan.quarantine.filesMoved, 1);
+    assert.equal(plan.files.length, 1);
+    assert.equal(await getStorageProvider().exists(file.storage_key), false);
   });
 });

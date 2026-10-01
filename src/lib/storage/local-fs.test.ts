@@ -55,16 +55,16 @@ test(
 );
 
 test(
-  "LocalFilesystemStorage.move moves the bytes and never overwrites the destination",
+  "LocalFilesystemStorage.copy copies the bytes, keeps the original, and never overwrites the destination",
   withTempStorage(async (storage) => {
     await storage.put("archive/a.pdf", Buffer.from("%PDF-1.4\n%a\n"));
     await storage.put("archive/taken.pdf", Buffer.from("%PDF-1.4\n%taken\n"));
 
-    await assert.rejects(storage.move("archive/a.pdf", "archive/taken.pdf"), StorageKeyExistsError);
+    await assert.rejects(storage.copy("archive/a.pdf", "archive/taken.pdf"), StorageKeyExistsError);
     assert.equal((await storage.get("archive/taken.pdf"))!.toString(), "%PDF-1.4\n%taken\n");
 
-    await storage.move("archive/a.pdf", "quarantine/20261001T000000/archive/a.pdf");
-    assert.equal(await storage.exists("archive/a.pdf"), false);
+    await storage.copy("archive/a.pdf", "quarantine/20261001T000000/archive/a.pdf");
+    assert.equal((await storage.get("archive/a.pdf"))!.toString(), "%PDF-1.4\n%a\n", "the original stays");
     assert.equal((await storage.get("quarantine/20261001T000000/archive/a.pdf"))!.toString(), "%PDF-1.4\n%a\n");
   })
 );

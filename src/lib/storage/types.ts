@@ -96,12 +96,14 @@ export interface StorageProvider {
   presignedGetUrl?(key: string, expiresInSeconds: number): Promise<string>;
 
   /**
-   * Optional: moves the file at `fromKey` to `toKey`, bytes unchanged.
-   * Never overwrites: throws StorageKeyExistsError if `toKey` is taken.
-   * Used by unpublish to put a withdrawn paper's file out of reach (see
-   * quarantineArtifactFiles in src/lib/db/queries.ts).
+   * Copies the file at `fromKey` to `toKey`, bytes (and any stored headers)
+   * unchanged, leaving the original in place. Never overwrites: throws
+   * StorageKeyExistsError if `toKey` is taken. Moving a file is a copy
+   * followed by delete() of the original -- done as two steps by
+   * relocateStoredFile in src/lib/db/queries.ts, so the database can be
+   * updated in between and never points at a key that doesn't exist.
    */
-  move?(fromKey: string, toKey: string): Promise<void>;
+  copy(fromKey: string, toKey: string): Promise<void>;
 }
 
 /**

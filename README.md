@@ -77,7 +77,10 @@ in the repository.
     (with a stated reason) any that aren't.
   - `unpublish <artifact-id>` — takes a published artifact back off the
     public site, and moves its stored file to a `quarantine/` key so any
-    download link already handed out stops working immediately.
+    download link already handed out stops working immediately (nothing
+    under `quarantine/` is ever served). `publish` moves it back.
+    `unpublish <artifact-id> --purge` lists what would be permanently
+    deleted from quarantine; add `--confirm` to delete it (audit-logged).
   - `list` — every artifact with its id/status/rights status.
   - `coverage` — the year × subject matrix (spec section 11.3): every
     exam-instance × subject combination, with each cell's real status

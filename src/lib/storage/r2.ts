@@ -226,19 +226,13 @@ export class R2Storage implements StorageProvider {
   }
 
   /**
-   * A temporary link that downloads this file straight from R2, valid for
-   * `expiresInSeconds`. Anyone holding the link can download the file until
-   * it expires, so only hand these out for files that are allowed to be
-   * public.
+   * Copies a file to a new key, leaving the original in place (R2 has no
+   * "rename"; a move is this followed by delete()). The copy keeps all the
+   * file's stored headers, and only happens if the file is still exactly
+   * the one just looked at (ETag). Refuses if something is already stored
+   * at `toKey`.
    */
-  /**
-   * Moves a file to a new key (R2 has no "rename", so: copy, then delete
-   * the original). The copy keeps all the file's stored headers, and only
-   * happens if the file is still exactly the one just looked at (ETag);
-   * the original is deleted only once the copy has succeeded. Refuses if
-   * something is already stored at `toKey`.
-   */
-  async move(fromKey: string, toKey: string): Promise<void> {
+  async copy(fromKey: string, toKey: string): Promise<void> {
     if (await this.exists(toKey)) throw new StorageKeyExistsError(toKey);
     const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: fromKey }));
     await this.client.send(
@@ -249,7 +243,6 @@ export class R2Storage implements StorageProvider {
         CopySourceIfMatch: head.ETag,
       })
     );
-    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: fromKey }));
   }
 
   /** "<bucket>/<key>", with each part of the key URL-encoded, as CopyObject's copy-source format requires. */
@@ -257,6 +250,12 @@ export class R2Storage implements StorageProvider {
     return `${this.bucket}/${key.split("/").map(encodeURIComponent).join("/")}`;
   }
 
+  /**
+   * A temporary link that downloads this file straight from R2, valid for
+   * `expiresInSeconds`. Anyone holding the link can download the file until
+   * it expires, so only hand these out for files that are allowed to be
+   * public -- /api/files checks that on every request before handing one out.
+   */
   async presignedGetUrl(key: string, expiresInSeconds: number): Promise<string> {
     if (!this.realClient) {
       throw new Error("presignedGetUrl needs a real R2 connection (it isn't available with a test client).");
@@ -268,13 +267,10 @@ export class R2Storage implements StorageProvider {
 
   locate(key: string): string {
     // This isn't a web address you can open directly in a browser (the
-    // storage bucket isn't set up for public access). Files are instead
-    // served through our own /api/files/[fileId] route, which re-checks
-    // whether the paper is still allowed to be downloaded every single
-    // time it's requested. We deliberately don't use a temporary
-    // "presigned" direct link here, because that kind of link would keep
-    // working for a while even after a paper's rights status changed —
-    // see src/lib/storage/index.ts for more on why.
+    // storage bucket isn't set up for public access). Visitors always go
+    // through our own /api/files/[fileId] route, which re-checks whether
+    // the paper is still allowed to be downloaded on every request, and
+    // only then redirects to a short-lived presignedGetUrl() link.
     return `r2://${this.bucket}/${key}`;
   }
 }
