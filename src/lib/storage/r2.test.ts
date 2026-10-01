@@ -20,6 +20,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { R2Storage } from "./r2";
 import { StorageKeyExistsError } from "./types";
+import { pdfServingHeaders } from "./serving-headers";
 
 function notFoundError(name: string, httpStatusCode = 404) {
   const err = new Error(`${name} error`);
@@ -48,7 +49,7 @@ function createFakeS3Client() {
     objects,
     send: async (command: unknown) => {
       if (command instanceof PutObjectCommand) {
-        const { Key, Body, ContentType, ContentDisposition, IfNoneMatch } = command.input;
+        const { Key, Body, ContentType, ContentDisposition, CacheControl, IfNoneMatch } = command.input;
         // Like real R2: "If-None-Match: *" makes the write fail with 412
         // when something is already stored at this key.
         if (IfNoneMatch === "*" && objects.has(Key!)) throw notFoundError("PreconditionFailed", 412);
@@ -56,6 +57,7 @@ function createFakeS3Client() {
           body: Buffer.from(Body as Buffer),
           contentType: ContentType,
           contentDisposition: ContentDisposition,
+          cacheControl: CacheControl,
         });
         return {};
       }
@@ -246,38 +248,40 @@ function storageWith(client: Pick<ReturnType<typeof createFakeS3Client>, "send">
   );
 }
 
-const DISPOSITION = `inline; filename="SISC Level 1 Mathematics 2019 - Paper 1.pdf"; filename*=UTF-8''SISC%20Level%201%20Mathematics%202019%20-%20Paper%201.pdf`;
+const SERVING = pdfServingHeaders("SISC Level 1 Mathematics 2019 — Paper 1");
 
-test("R2Storage.put stores the Content-Disposition it's given", async () => {
+test("R2Storage.put stores the serving headers it's given", async () => {
   const fake = createFakeS3Client();
   const storage = storageWith(fake);
 
-  await storage.put("a.pdf", Buffer.from("%PDF-1.4\n"), { contentType: "application/pdf", contentDisposition: DISPOSITION });
+  await storage.put("a.pdf", Buffer.from("%PDF-1.4\n"), SERVING);
 
   const info = await storage.describe("a.pdf");
-  assert.equal(info?.contentDisposition, DISPOSITION);
   assert.equal(info?.contentType, "application/pdf");
+  assert.equal(info?.contentDisposition, SERVING.contentDisposition);
+  assert.equal(info?.cacheControl, "private, max-age=600");
 });
 
-test("R2Storage.setContentDisposition changes only the header, keeping bytes and other headers", async () => {
+test("R2Storage.setServingHeaders sets all three headers explicitly, keeping the bytes", async () => {
   const fake = createFakeS3Client();
   const storage = storageWith(fake);
   const key = "archive/sisc-l1/2019/mathematics/question-paper/sisc-l1_2019_mathematics_question-paper_1.pdf";
   const body = Buffer.from("%PDF-1.4\n%original bytes\n");
-  await storage.put(key, body, { contentType: "application/pdf" });
-  fake.objects.get(key)!.cacheControl = "public, max-age=60";
+  // Start from a wrong Content-Type and no other headers, as on an object
+  // stored before serving headers existed.
+  await storage.put(key, body, { contentType: "binary/octet-stream" });
   const etagBefore = (await storage.describe(key))!.etag;
 
-  const after = await storage.setContentDisposition(key, DISPOSITION);
+  const after = await storage.setServingHeaders(key, SERVING);
 
-  assert.equal(after.contentDisposition, DISPOSITION);
-  assert.equal(after.contentType, "application/pdf", "Content-Type must be carried over, not dropped by REPLACE");
-  assert.equal(fake.objects.get(key)!.cacheControl, "public, max-age=60", "other stored headers must be carried over");
+  assert.equal(after.contentType, "application/pdf", "Content-Type is set explicitly, not copied from the old object");
+  assert.equal(after.contentDisposition, SERVING.contentDisposition);
+  assert.equal(after.cacheControl, "private, max-age=600");
   assert.equal(after.etag, etagBefore, "the bytes must be unchanged");
   assert.equal((await storage.get(key))!.toString(), body.toString());
 });
 
-test("R2Storage.setContentDisposition only copies if the file is unchanged since it was looked at", async () => {
+test("R2Storage.setServingHeaders only copies if the file is unchanged since it was looked at", async () => {
   const fake = createFakeS3Client();
   const sent: CopyObjectCommand[] = [];
   const storage = storageWith({
@@ -290,11 +294,13 @@ test("R2Storage.setContentDisposition only copies if the file is unchanged since
   await storage.put("a.pdf", Buffer.from("%PDF-1.4\n"), { contentType: "application/pdf" });
   const { etag } = (await storage.describe("a.pdf"))!;
 
-  await storage.setContentDisposition("a.pdf", DISPOSITION);
+  await storage.setServingHeaders("a.pdf", SERVING);
 
   assert.equal(sent[0].input.MetadataDirective, "REPLACE");
   assert.equal(sent[0].input.CopySourceIfMatch, etag);
   assert.equal(sent[0].input.CopySource, "test-bucket/a.pdf");
+  assert.equal(sent[0].input.ContentType, "application/pdf");
+  assert.equal(sent[0].input.CacheControl, "private, max-age=600");
 });
 
 test("R2Storage.describe returns null for a missing key", async () => {

@@ -8,10 +8,10 @@ import { buildStorageKey } from "@/lib/storage/types";
 import {
   artifactSlug,
   artifactTypeSlug,
-  contentDispositionHeader,
   generateArtifactTitle,
   generateCanonicalFileName,
 } from "@/lib/artifact-naming";
+import { pdfServingHeaders } from "@/lib/storage/serving-headers";
 import type {
   ArtifactStatus,
   ArtifactType,
@@ -831,12 +831,10 @@ async function putWithoutOverwriting(
 ) {
   const storage = getStorageProvider();
   try {
-    await storage.put(storageKey, file.buffer, {
-      contentType: file.mime,
-      // "inline" lets the browser show the PDF; the file name comes from
-      // the paper's title. Used when the file is served straight from R2.
-      contentDisposition: contentDispositionHeader("inline", title),
-    });
+    // The headers R2 sends when the file is served straight from it: shown
+    // in the browser ("inline"), named after the paper's title, and kept by
+    // the visitor's browser for 10 minutes (see serving-headers.ts).
+    await storage.put(storageKey, file.buffer, { ...pdfServingHeaders(title), contentType: file.mime });
   } catch (err) {
     if (!(err instanceof StorageKeyExistsError)) throw err;
     const existing = await storage.get(storageKey);

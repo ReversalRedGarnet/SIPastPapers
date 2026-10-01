@@ -28,7 +28,8 @@ import {
   type CoverageStatus,
   type StoredFile,
 } from "@/lib/db/queries";
-import { artifactTypeSlug, contentDispositionHeader } from "@/lib/artifact-naming";
+import { artifactTypeSlug, generateDownloadFilename } from "@/lib/artifact-naming";
+import { pdfServingHeaders, type ServingHeaders } from "@/lib/storage/serving-headers";
 import { getStorageProvider } from "@/lib/storage";
 import { R2Storage, type StoredObjectInfo } from "@/lib/storage/r2";
 import type { ArtifactStatus, ArtifactType, RightsStatus } from "@/types/domain";
@@ -517,9 +518,19 @@ function printStoredInfo(label: string, info: StoredObjectInfo | null): void {
   }
   console.log(`  Content-Type:        ${info.contentType ?? "(none)"}`);
   console.log(`  Content-Disposition: ${info.contentDisposition ?? "(none)"}`);
+  console.log(`  Cache-Control:       ${info.cacheControl ?? "(none)"}`);
   console.log(`  Content-Length:      ${info.contentLength ?? "?"}`);
   console.log(`  ETag:                ${info.etag ?? "?"}`);
   console.log(`  Last-Modified:       ${info.lastModified?.toISOString() ?? "?"}`);
+}
+
+/** Which of the three serving headers on a stored object differ from what they should be (empty = all correct). */
+function headersToChange(info: StoredObjectInfo, target: ServingHeaders): string[] {
+  const changes: string[] = [];
+  if (info.contentType !== target.contentType) changes.push("Content-Type");
+  if (info.contentDisposition !== target.contentDisposition) changes.push("Content-Disposition");
+  if (info.cacheControl !== target.cacheControl) changes.push("Cache-Control");
+  return changes;
 }
 
 /**
@@ -550,19 +561,22 @@ async function runInspectObject(args: ParsedArgs): Promise<void> {
 
 async function runSetDispositionOne(storage: R2Storage, flags: Record<string, string>): Promise<void> {
   const file = await findStoredFile(flags);
-  const target = contentDispositionHeader("inline", file.title);
+  const target = pdfServingHeaders(file.title);
   console.log(`${file.title}\n  key: ${file.storageKey}\n  file id: ${file.fileId} (${file.status})\n`);
 
   const before = await storage.describe(file.storageKey);
   printStoredInfo("Before", before);
   if (!before) fail("Nothing to update.");
-  if (before.contentDisposition === target) {
+  if (headersToChange(before, target).length === 0) {
     console.log("\nAlready set -- no change made.");
   } else {
-    printStoredInfo("\nAfter", await storage.setContentDisposition(file.storageKey, target));
+    printStoredInfo("\nAfter", await storage.setServingHeaders(file.storageKey, target));
   }
   await printPresignedResponse(storage, file.storageKey);
 }
+
+// How many of the objects that would change a dry run prints as examples.
+const DRY_RUN_SAMPLE_SIZE = 5;
 
 async function runSetDispositionAll(storage: R2Storage, confirm: boolean): Promise<void> {
   // Several file records can't share a key in practice, but de-duplicate
@@ -572,32 +586,44 @@ async function runSetDispositionAll(storage: R2Storage, confirm: boolean): Promi
   let missing = 0;
   let updated = 0;
   let failed = 0;
-  const pending: StoredFile[] = [];
+  const pending: { file: StoredFile; changes: string[] }[] = [];
 
   for (const file of files) {
     const info = await storage.describe(file.storageKey);
     if (!info) {
       missing++;
       console.log(`MISSING  ${file.storageKey}`);
-    } else if (info.contentDisposition === contentDispositionHeader("inline", file.title)) {
-      alreadySet++;
-    } else {
-      pending.push(file);
+      continue;
     }
+    const changes = headersToChange(info, pdfServingHeaders(file.title));
+    if (changes.length === 0) alreadySet++;
+    else pending.push({ file, changes });
   }
 
   if (!confirm) {
-    for (const file of pending) console.log(`WOULD UPDATE  ${file.storageKey}`);
     console.log(
-      `\n${files.length} objects: ${pending.length} would be updated, ${alreadySet} already set, ${missing} missing from R2.` +
-        `\nDry run -- nothing changed. Re-run with --confirm to update.`
+      `${files.length} objects: ${pending.length} would be updated, ${alreadySet} already set, ${missing} missing from R2.`
     );
+    if (pending.length > 0) {
+      console.log(`\nSample of what would be set (first ${Math.min(DRY_RUN_SAMPLE_SIZE, pending.length)}):`);
+      for (const { file, changes } of pending.slice(0, DRY_RUN_SAMPLE_SIZE)) {
+        console.log(`  ${generateDownloadFilename(file.title)}`);
+        console.log(`    key: ${file.storageKey}`);
+        console.log(`    changes: ${changes.join(", ")}`);
+      }
+      const target = pdfServingHeaders("example");
+      console.log(
+        `\nEvery updated object gets Content-Type: ${target.contentType}, Cache-Control: ${target.cacheControl},` +
+          `\nand Content-Disposition: inline with its own filename (ASCII filename + UTF-8 filename*).`
+      );
+    }
+    console.log("\nDry run -- nothing changed. Re-run with --confirm to update.");
     return;
   }
 
-  for (const file of pending) {
+  for (const { file } of pending) {
     try {
-      await storage.setContentDisposition(file.storageKey, contentDispositionHeader("inline", file.title));
+      await storage.setServingHeaders(file.storageKey, pdfServingHeaders(file.title));
       updated++;
       console.log(`UPDATED  ${file.storageKey}`);
     } catch (err) {
@@ -792,14 +818,17 @@ Commands:
       actually sends back (plus the link, to try in a browser).
 
   set-disposition (--key <storage-key> | --file-id <id>)
-      R2 only. Set one file's stored Content-Disposition to "inline" with
-      its readable file name (ASCII filename + UTF-8 filename*), without
-      changing its bytes, then show the before/after headers and the
-      presigned-link check. New ingests get this automatically.
+      R2 only. Set one file's stored serving headers, without changing its
+      bytes: Content-Type: application/pdf, Cache-Control: private,
+      max-age=600, and Content-Disposition: inline with its readable file
+      name (ASCII filename + UTF-8 filename*). Then show the before/after
+      headers and the presigned-link check. New ingests get these
+      automatically.
 
   set-disposition --all [--confirm]
       Same for every file in the database. Without --confirm this only
-      lists what would change -- same dry-run-by-default pattern as ingest.
+      prints how many would change, with a few examples -- same
+      dry-run-by-default pattern as ingest.
 `;
 
 async function main(): Promise<void> {

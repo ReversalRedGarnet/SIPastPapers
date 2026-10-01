@@ -8,6 +8,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import type { ServingHeaders } from "./serving-headers";
 import { StorageKeyExistsError, type PutOptions, type PutResult, type StorageProvider } from "./types";
 
 export interface R2StorageConfig {
@@ -21,6 +22,7 @@ export interface R2StorageConfig {
 export interface StoredObjectInfo {
   contentType?: string;
   contentDisposition?: string;
+  cacheControl?: string;
   contentLength?: number;
   etag?: string;
   lastModified?: Date;
@@ -93,6 +95,7 @@ export class R2Storage implements StorageProvider {
           // downloaded straight from R2 -- this is what gives a downloaded
           // paper its readable name.
           ContentDisposition: options.contentDisposition,
+          CacheControl: options.cacheControl,
           // "Only save this if nothing exists at this key yet." R2 checks
           // this itself, in the same step as the write, and answers 412
           // Precondition Failed if something is already there.
@@ -176,6 +179,7 @@ export class R2Storage implements StorageProvider {
       return {
         contentType: head.ContentType,
         contentDisposition: head.ContentDisposition,
+        cacheControl: head.CacheControl,
         contentLength: head.ContentLength,
         etag: head.ETag,
         lastModified: head.LastModified,
@@ -187,17 +191,19 @@ export class R2Storage implements StorageProvider {
   }
 
   /**
-   * Changes the Content-Disposition header stored with an existing file,
-   * without touching the file's bytes. R2 (like S3) can't edit a stored
-   * file's headers directly, so this copies the file onto itself with
-   * replacement headers ("MetadataDirective: REPLACE").
+   * Sets the Content-Type, Content-Disposition and Cache-Control headers
+   * stored with an existing file, without touching the file's bytes. R2
+   * (like S3) can't edit a stored file's headers directly, so this copies
+   * the file onto itself with replacement headers ("MetadataDirective:
+   * REPLACE").
    *
-   * Two safety details: every other stored header is copied over
-   * unchanged (REPLACE would otherwise drop them), and the copy only
-   * happens if the file is still exactly the one just looked at (its ETag
-   * fingerprint matches) -- so this can never swap in different content.
+   * Two safety details: all three headers are given explicitly and any
+   * other stored header is copied over unchanged (REPLACE would otherwise
+   * drop it), and the copy only happens if the file is still exactly the
+   * one just looked at (its ETag fingerprint matches) -- so this can never
+   * swap in different content.
    */
-  async setContentDisposition(key: string, contentDisposition: string): Promise<StoredObjectInfo> {
+  async setServingHeaders(key: string, headers: ServingHeaders): Promise<StoredObjectInfo> {
     const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
     await this.client.send(
       new CopyObjectCommand({
@@ -208,9 +214,9 @@ export class R2Storage implements StorageProvider {
         CopySource: `${this.bucket}/${key.split("/").map(encodeURIComponent).join("/")}`,
         CopySourceIfMatch: head.ETag,
         MetadataDirective: "REPLACE",
-        ContentDisposition: contentDisposition,
-        ContentType: head.ContentType,
-        CacheControl: head.CacheControl,
+        ContentType: headers.contentType,
+        ContentDisposition: headers.contentDisposition,
+        CacheControl: headers.cacheControl,
         ContentEncoding: head.ContentEncoding,
         ContentLanguage: head.ContentLanguage,
         Metadata: head.Metadata,

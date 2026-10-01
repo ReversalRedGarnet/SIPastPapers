@@ -29,6 +29,8 @@ export interface PutOptions {
   contentType?: string;
   /** The Content-Disposition header to send with the file -- see contentDispositionHeader in src/lib/artifact-naming.ts. */
   contentDisposition?: string;
+  /** The Cache-Control header to send with the file -- see src/lib/storage/serving-headers.ts. */
+  cacheControl?: string;
 }
 
 /**
