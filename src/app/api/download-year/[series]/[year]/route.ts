@@ -9,6 +9,7 @@ import { generateDownloadFilename, sanitizeForFilename } from "@/lib/artifact-na
 import { seriesDisplayLabel } from "@/lib/format";
 import { identifyVisitor, rateLimit, VISITOR_COOKIE } from "@/lib/rate-limit";
 import { rateLimitedResponse, withVisitorCookie } from "@/lib/rate-limit-response";
+import { logEvent, visitorLogFields } from "@/lib/log";
 
 /**
  * The most files we'll read from storage at the same time. The zip
@@ -55,8 +56,10 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ series: string; year: string }> }
 ) {
+  const startedAt = Date.now();
   const { series: seriesCode, year: yearParam } = await params;
   const visitor = identifyVisitor(request.cookies.get(VISITOR_COOKIE)?.value, request.headers.get("x-forwarded-for"));
+  const logFields = { series: seriesCode, year: yearParam, ...visitorLogFields(visitor, request.headers.get("user-agent")) };
   const year = Number(yearParam);
   if (!Number.isInteger(year)) {
     return withVisitorCookie(new NextResponse("Not found", { status: 404 }), visitor);
@@ -66,10 +69,14 @@ export async function GET(
   // the smallest allowance (see src/lib/rate-limit.ts). Downloading the
   // same year again (e.g. retrying a failed download) counts once.
   const limit = rateLimit("zip", visitor, `${seriesCode}/${year}`);
-  if (!limit.allowed) return withVisitorCookie(rateLimitedResponse(request, limit), visitor);
+  if (!limit.allowed) {
+    logEvent("rate_limited", { bucket: "zip", scope: limit.scope, retryAfterSeconds: limit.retryAfterSeconds, ...logFields });
+    return withVisitorCookie(rateLimitedResponse(request, limit), visitor);
+  }
 
   const files = await listPublishedFilesForInstance(seriesCode, year);
   if (files.length === 0) {
+    logEvent("zip", { outcome: "not_found", ...logFields });
     return withVisitorCookie(new NextResponse("Not found", { status: 404 }), visitor);
   }
 
@@ -98,6 +105,7 @@ export async function GET(
     console.error(
       `[download-year] every published file for ${seriesCode}/${year} is missing from storage (${files.length} expected)`
     );
+    logEvent("zip", { outcome: "all_missing", files: files.length, ...logFields });
     return new NextResponse(
       "This year's papers are temporarily unavailable. Please try again later or report the issue.",
       { status: 500 }
@@ -129,6 +137,27 @@ export async function GET(
     archive.once("error", reject);
   });
 
+  // One log line when the zip finishes being sent, fails, or is cut off
+  // before the end -- the visitor's connection dropping, or the server
+  // stopping a download that ran past its time limit, both show up as
+  // "aborted", with how far it got. `archive.pointer()` is how many bytes
+  // of zip have been produced so far.
+  let finishedSending = false;
+  archive.once("end", () => {
+    finishedSending = true;
+    logEvent("zip", { outcome: "finished", files: availableFiles.length, bytes: archive.pointer(), ms: Date.now() - startedAt, ...logFields });
+  });
+  archive.once("error", (err) => {
+    finishedSending = true;
+    // A download cut off part-way arrives here as an "AbortError".
+    const outcome = err.name === "AbortError" ? "aborted" : "failed";
+    logEvent("zip", { outcome, error: err.message, bytes: archive.pointer(), ms: Date.now() - startedAt, ...logFields });
+  });
+  archive.once("close", () => {
+    if (finishedSending) return;
+    logEvent("zip", { outcome: "aborted", bytes: archive.pointer(), ms: Date.now() - startedAt, ...logFields });
+  });
+
   // `(async () => { ... })()` defines a function and calls it immediately,
   // all in one expression -- sometimes called an "IIFE" (Immediately
   // Invoked Function Expression). It's used here because this code needs
@@ -137,14 +166,14 @@ export async function GET(
   // waiting for the zip to finish first.
   (async () => {
     try {
-      const limit = pLimit(READ_CONCURRENCY);
+      const readLimit = pLimit(READ_CONCURRENCY);
       // `Promise.race([...])` -- unlike `Promise.all` (see
       // src/app/page.tsx), which waits for every promise to finish --
       // continues as soon as the *first* one settles, whichever that is.
       // Here: either every file finishes appending, or the archive reports
       // an error, whichever happens first.
       await Promise.race([
-        Promise.all(availableFiles.map((file) => limit(() => appendFile(storage, archive, file)))),
+        Promise.all(availableFiles.map((file) => readLimit(() => appendFile(storage, archive, file)))),
         archiveError,
       ]);
       await archive.finalize();
@@ -157,6 +186,7 @@ export async function GET(
 
   // The zip is starting to be sent, so now it counts.
   limit.record();
+  logEvent("zip", { outcome: "started", files: availableFiles.length, ms: Date.now() - startedAt, ...logFields });
   return withVisitorCookie(
     new NextResponse(Readable.toWeb(archive) as ReadableStream<Uint8Array>, {
       status: 200,

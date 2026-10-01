@@ -11,6 +11,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createIssue, getPublicArtifactPath } from "@/lib/db/queries";
 import { identifyVisitor, rateLimit, VISITOR_COOKIE, VISITOR_COOKIE_OPTIONS } from "@/lib/rate-limit";
+import { logEvent, visitorLogFields } from "@/lib/log";
 import { parseReportForm, safeReturnTo } from "@/lib/report-form";
 import { reportStatusHref } from "@/lib/report-status";
 
@@ -37,26 +38,42 @@ import { reportStatusHref } from "@/lib/report-status";
 export async function reportIssueAction(formData: FormData): Promise<void> {
   // Only used when we can't work out the paper's page ourselves.
   const fallbackReturnTo = safeReturnTo(formData.get("returnTo"));
+
+  // `cookies()` and `headers()` read the incoming request; they're async
+  // in this version of Next.js, hence the `await`.
+  const cookieStore = await cookies();
+  const headerList = await headers();
+  const visitor = identifyVisitor(cookieStore.get(VISITOR_COOKIE)?.value, headerList.get("x-forwarded-for"));
+  if (visitor.newCookie) cookieStore.set(VISITOR_COOKIE, visitor.newCookie, VISITOR_COOKIE_OPTIONS);
+  const logFields = visitorLogFields(visitor, headerList.get("user-agent"));
+
   const parsed = parseReportForm(formData);
 
   // A bot filled in the hidden spam-trap field: act as if it worked, so it
   // has no reason to try again differently, but save nothing.
-  if (parsed.kind === "spam") redirect(reportStatusHref(fallbackReturnTo, "sent"));
-  if (parsed.kind === "invalid") redirect(reportStatusHref(fallbackReturnTo, parsed.code));
+  if (parsed.kind === "spam") {
+    logEvent("report", { outcome: "spam", ...logFields });
+    redirect(reportStatusHref(fallbackReturnTo, "sent"));
+  }
+  if (parsed.kind === "invalid") {
+    logEvent("report", { outcome: "invalid", code: parsed.code, ...logFields });
+    redirect(reportStatusHref(fallbackReturnTo, parsed.code));
+  }
 
   // A few reports per visitor every few minutes (see src/lib/rate-limit.ts),
   // so the form can't be used to flood the issues table. Every report is a
   // separate item -- unlike files, sending "the same" report again counts.
-  // `cookies()` and `headers()` read the incoming request; they're async
-  // in this version of Next.js, hence the `await`.
-  const cookieStore = await cookies();
-  const visitor = identifyVisitor(cookieStore.get(VISITOR_COOKIE)?.value, (await headers()).get("x-forwarded-for"));
-  if (visitor.newCookie) cookieStore.set(VISITOR_COOKIE, visitor.newCookie, VISITOR_COOKIE_OPTIONS);
   const limit = rateLimit("report", visitor, randomUUID());
-  if (!limit.allowed) redirect(reportStatusHref(fallbackReturnTo, "too-many-reports"));
+  if (!limit.allowed) {
+    logEvent("rate_limited", { bucket: "report", scope: limit.scope, retryAfterSeconds: limit.retryAfterSeconds, ...logFields });
+    redirect(reportStatusHref(fallbackReturnTo, "too-many-reports"));
+  }
 
   const paperPath = await getPublicArtifactPath(parsed.artifactId);
-  if (!paperPath) redirect(reportStatusHref(fallbackReturnTo, "unknown-paper"));
+  if (!paperPath) {
+    logEvent("report", { outcome: "unknown_paper", ...logFields });
+    redirect(reportStatusHref(fallbackReturnTo, "unknown-paper"));
+  }
 
   await createIssue({
     artifactId: parsed.artifactId,
@@ -65,6 +82,8 @@ export async function reportIssueAction(formData: FormData): Promise<void> {
     contact: parsed.contact,
   });
   limit.record();
+  // Never the report's text or contact details -- just that one was saved.
+  logEvent("report", { outcome: "saved", artifactId: parsed.artifactId, issueType: parsed.issueType, ...logFields });
 
   redirect(reportStatusHref(paperPath, "sent"));
 }

@@ -105,9 +105,10 @@ let fallbackSecret: string | undefined;
  * The key used to sign visitor cookies, so a script can't simply make up
  * its own IDs to get fresh allowances. Set RATE_LIMIT_SECRET in production;
  * without it, each running copy of the app invents its own, which works
- * but means cookies issued by one copy look invalid to another.
+ * but means cookies issued by one copy look invalid to another. (Also
+ * used as the key for anonymising addresses in logs -- see src/lib/log.ts.)
  */
-function signingSecret(): string {
+export function signingSecret(): string {
   const configured = process.env.RATE_LIMIT_SECRET;
   if (configured) return configured;
   if (!fallbackSecret) {
