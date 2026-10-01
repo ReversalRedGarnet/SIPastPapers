@@ -463,3 +463,102 @@ test("getPublicArtifactPath finds a published paper's page, and nothing for an u
     assert.equal(await queries.getPublicArtifactPath(randomUUID()), undefined);
   });
 });
+
+/**
+ * Publishes a fresh 2099 mathematics paper and returns a function that
+ * reports which public read paths can currently see it. Rights are changed
+ * by updating the paper's one rights row (not adding another): inside a
+ * test transaction every row gets the same created_at, so "most recent"
+ * would be ambiguous.
+ */
+async function publishTestPaper(paperNo: string) {
+  const { artifactId } = await queries.ingestArtifact({
+    examSeriesCode: "sisc-l1",
+    year: 2099,
+    subjectSlug: "mathematics",
+    artifactType: "question_paper",
+    paperNo,
+    file: { buffer: Buffer.from(`%PDF-1.4\n%rights-invariant-${paperNo}\n`), mime: "application/pdf" },
+  });
+  await queries.approveRights(artifactId, {
+    basis: "teacher-verified",
+    approvedBy: "Test Verifier",
+    evidenceUri: `file://evidence/rights-invariant-${paperNo}.pdf`,
+  });
+  const published = await queries.publishArtifact(artifactId);
+  assert.ok(!("missing" in published), "test paper should publish");
+  const [fileRow] = await query<{ id: string }>("select id from files where artifact_id = $1", [artifactId]);
+  const slug = artifactSlug({ artifactType: "question_paper", paperNo });
+
+  async function visibility() {
+    const search = await queries.searchPublicArtifacts({ series: "sisc-l1", year: "2099", subject: "mathematics" });
+    const recent = await queries.listRecentPublicArtifacts(10_000);
+    const zip = await queries.listPublishedFilesForInstance("sisc-l1", 2099);
+    return {
+      search: search.some((r) => r.id === artifactId),
+      bySlug: (await queries.getPublicArtifactBySlug("sisc-l1", 2099, "mathematics", slug)) !== undefined,
+      recent: recent.some((r) => r.id === artifactId),
+      zip: zip.some((f) => f.fileId === fileRow.id),
+      download: (await queries.getFileForDownload(fileRow.id)) !== undefined,
+      reportable: (await queries.getPublicArtifactPath(artifactId)) !== undefined,
+    };
+  }
+  const everywhere = { search: true, bySlug: true, recent: true, zip: true, download: true, reportable: true };
+  const nowhere = { search: false, bySlug: false, recent: false, zip: false, download: false, reportable: false };
+  return { artifactId, visibility, everywhere, nowhere };
+}
+
+test("a published paper whose rights are no longer approved disappears from every public read path", async () => {
+  await withRolledBackTransaction(async () => {
+    const paper = await publishTestPaper("4");
+    assert.deepEqual(await paper.visibility(), paper.everywhere);
+
+    await query("update rights_records set rights_status = 'rights_hold' where artifact_id = $1", [paper.artifactId]);
+    assert.deepEqual(await paper.visibility(), paper.nowhere);
+  });
+});
+
+test("expired rights hide a published paper; rights are still valid on the expiry date itself", async () => {
+  await withRolledBackTransaction(async () => {
+    const paper = await publishTestPaper("5");
+
+    await query("update rights_records set expiry_date = current_date where artifact_id = $1", [paper.artifactId]);
+    assert.deepEqual(await paper.visibility(), paper.everywhere, "valid through the expiry date");
+
+    await query("update rights_records set expiry_date = current_date - 1 where artifact_id = $1", [paper.artifactId]);
+    assert.deepEqual(await paper.visibility(), paper.nowhere, "hidden once the expiry date has passed");
+  });
+});
+
+test("publish is refused for an unapproved rights status or expired rights, even with every field filled in", async () => {
+  await withRolledBackTransaction(async () => {
+    const { artifactId } = await queries.ingestArtifact({
+      examSeriesCode: "sisc-l1",
+      year: 2099,
+      subjectSlug: "mathematics",
+      artifactType: "question_paper",
+      paperNo: "3",
+      file: { buffer: Buffer.from("%PDF-1.4\n%rights-gate\n"), mime: "application/pdf" },
+    });
+    await queries.approveRights(artifactId, {
+      basis: "teacher-verified",
+      approvedBy: "Test Verifier",
+      evidenceUri: "file://evidence/rights-gate.pdf",
+    });
+
+    await query("update rights_records set rights_status = 'denied' where artifact_id = $1", [artifactId]);
+    const denied = await queries.publishArtifact(artifactId);
+    assert.ok("missing" in denied && denied.missing.some((m) => m.includes('approved rights_status (currently "denied")')));
+
+    await query(
+      "update rights_records set rights_status = 'permission_granted', expiry_date = current_date - 1 where artifact_id = $1",
+      [artifactId]
+    );
+    const expired = await queries.publishArtifact(artifactId);
+    assert.ok("missing" in expired && expired.missing.some((m) => m.startsWith("unexpired rights")));
+
+    await query("update rights_records set expiry_date = null where artifact_id = $1", [artifactId]);
+    const ok = await queries.publishArtifact(artifactId);
+    assert.ok(!("missing" in ok), "publishes once rights are approved and unexpired");
+  });
+});

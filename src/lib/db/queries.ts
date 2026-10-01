@@ -274,7 +274,43 @@ export const listYears = cache(async (): Promise<number[]> => {
 
 // --- public reads ------------------------------------------------------
 
-const PUBLIC_STATUSES = "('published', 'not_yet_recovered')";
+/**
+ * The rights statuses under which a paper may be public (PROJECT_SPEC
+ * section 17.1). approveRights only ever sets one of these.
+ */
+const APPROVED_RIGHTS_STATUSES: readonly RightsStatus[] = ["permission_granted", "public_domain_or_expired"];
+
+/**
+ * SQL, for use inside a query on `artifacts a`: true when the paper's most
+ * recent rights record has an approved status and hasn't expired (a record
+ * is still valid on its expiry date itself).
+ *
+ * The publish step already refuses papers without approved rights, but
+ * rights can change after publishing (a hold, a denial, an expiry date
+ * passing) -- so every public read checks them again too, rather than
+ * trusting the "published" status alone.
+ */
+const RIGHTS_CURRENTLY_APPROVED = `exists (
+  select 1 from (
+    select rr.rights_status, rr.expiry_date
+    from rights_records rr
+    where rr.artifact_id = a.id
+    order by rr.created_at desc
+    limit 1
+  ) latest
+  where latest.rights_status in (${APPROVED_RIGHTS_STATUSES.map((s) => `'${s}'`).join(", ")})
+    and (latest.expiry_date is null or latest.expiry_date >= current_date)
+)`;
+
+/** SQL: published, with rights currently approved -- the only papers whose files may be served. */
+const SERVABLE = `(a.status = 'published' and ${RIGHTS_CURRENTLY_APPROVED})`;
+
+/**
+ * SQL: everything the public may see -- servable papers, plus "not yet
+ * recovered" placeholders, which are listed so a gap is visible but have
+ * no file (so no rights question arises).
+ */
+const PUBLICLY_VISIBLE = `(${SERVABLE} or a.status = 'not_yet_recovered')`;
 
 export interface ExamContentAvailability {
   /** Which exam series (e.g. "SIF3") have at least one paper visible to the public, in any year */
@@ -298,7 +334,7 @@ export const getExamContentAvailability = cache(async (): Promise<ExamContentAva
      from artifacts a
      join exam_instances ei on ei.id = a.exam_instance_id
      join exam_series es on es.id = ei.exam_series_id
-     where a.status in ${PUBLIC_STATUSES}`
+     where ${PUBLICLY_VISIBLE}`
   );
   const seriesWithContent = new Set<string>();
   const yearsWithContent = new Set<string>();
@@ -342,7 +378,7 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
   // actual instructions. `$${params.length}` below just calculates which
   // numbered blank to use next, based on how many params have been added
   // to the list so far.
-  const clauses: string[] = [`a.status in ${PUBLIC_STATUSES}`];
+  const clauses: string[] = [PUBLICLY_VISIBLE];
   const params: (string | number)[] = [];
 
   if (filters.series) {
@@ -503,7 +539,7 @@ export const listPublicSubjectsForInstance = cache(async (
      join exam_instances ei on ei.id = a.exam_instance_id
      join exam_series es on es.id = ei.exam_series_id
      join subjects s on s.id = a.subject_id
-     where es.code = $1 and ei.year = $2 and a.status in ${PUBLIC_STATUSES}
+     where es.code = $1 and ei.year = $2 and ${PUBLICLY_VISIBLE}
      group by s.id
      order by s.canonical_name`,
     [seriesCode, year]
@@ -533,7 +569,7 @@ export const listPublishedFilesForInstance = cache(async (
      join exam_instances ei on ei.id = a.exam_instance_id
      join exam_series es on es.id = ei.exam_series_id
      join files f on f.artifact_id = a.id
-     where es.code = $1 and ei.year = $2 and a.status = 'published'
+     where es.code = $1 and ei.year = $2 and ${SERVABLE}
      order by a.title`,
     [seriesCode, year]
   );
@@ -543,7 +579,7 @@ export const listPublishedFilesForInstance = cache(async (
 /** Gets the most recently published exam papers, for the homepage's "Recently added" list. */
 export const listRecentPublicArtifacts = cache(async (limit: number): Promise<PublicExamRecord[]> => {
   const rows = await query<PublicArtifactRow>(
-    `${PUBLIC_ARTIFACT_SELECT} where a.status = 'published' order by a.published_at desc limit $1`,
+    `${PUBLIC_ARTIFACT_SELECT} where ${SERVABLE} order by a.published_at desc limit $1`,
     [limit]
   );
   return rows.map(hydratePublicRecord);
@@ -557,7 +593,7 @@ export const getPublicArtifactBySlug = cache(async (
 ): Promise<{ record: PublicExamRecord; related: PublicExamRecord[] } | undefined> => {
   const rows = await query<PublicArtifactRow>(
     `${PUBLIC_ARTIFACT_SELECT}
-     where a.status in ${PUBLIC_STATUSES} and es.code = $1 and ei.year = $2 and s.subject_code = $3`,
+     where ${PUBLICLY_VISIBLE} and es.code = $1 and ei.year = $2 and s.subject_code = $3`,
     [seriesCode, year, subjectSlug]
   );
 
@@ -585,7 +621,7 @@ export const listSubjectArtifacts = cache(async (
 ): Promise<PublicExamRecord[]> => {
   const rows = await query<PublicArtifactRow>(
     `${PUBLIC_ARTIFACT_SELECT}
-     where a.status in ${PUBLIC_STATUSES} and es.code = $1 and s.subject_code = $2
+     where ${PUBLICLY_VISIBLE} and es.code = $1 and s.subject_code = $2
      order by ei.year asc, a.type asc, a.paper_no asc nulls first`,
     [seriesCode, subjectSlug]
   );
@@ -989,27 +1025,27 @@ export interface DownloadableFile {
 }
 
 /**
- * Only hands back a file if its exam paper is CURRENTLY published. We
- * check this fresh against the database every single time (nothing is
- * cached here), so that if a paper gets withdrawn or put on hold, its file
- * stops being downloadable immediately — not after some delay.
+ * Only hands back a file if its exam paper is CURRENTLY published with
+ * rights currently approved (see SERVABLE). We check this fresh against
+ * the database every single time (nothing is cached here), so that if a
+ * paper gets withdrawn, put on hold, or its rights lapse, its file stops
+ * being downloadable immediately — not after some delay.
  */
 export async function getFileForDownload(fileId: string): Promise<DownloadableFile | undefined> {
   const row = await queryOne<{
     storage_key: string;
     mime: string;
     bytes: number;
-    status: ArtifactStatus;
     title: string;
   }>(
-    `select f.storage_key, f.mime, f.bytes, a.status, a.title
+    `select f.storage_key, f.mime, f.bytes, a.title
      from files f
      join artifacts a on a.id = f.artifact_id
-     where f.id = $1`,
+     where f.id = $1 and ${SERVABLE}`,
     [fileId]
   );
 
-  if (!row || row.status !== "published") return undefined;
+  if (!row) return undefined;
   return { storageKey: row.storage_key, mime: row.mime, bytes: row.bytes, title: row.title };
 }
 
@@ -1028,7 +1064,7 @@ export async function getPublicArtifactPath(artifactId: string): Promise<string 
      join exam_instances ei on ei.id = a.exam_instance_id
      join exam_series es on es.id = ei.exam_series_id
      join subjects s on s.id = a.subject_id
-     where a.id = $1 and a.status in ${PUBLIC_STATUSES}`,
+     where a.id = $1 and ${PUBLICLY_VISIBLE}`,
     [artifactId]
   );
   if (!row) return undefined;
@@ -1200,8 +1236,21 @@ export interface RightsGateStatus {
  * before actually publishing anything.
  */
 export async function checkRightsGate(artifactId: string): Promise<RightsGateStatus> {
-  const rights = await queryOne<{ basis: string | null; approved_by: string | null; evidence_uri: string | null }>(
-    "select basis, approved_by, evidence_uri from rights_records where artifact_id = $1 order by created_at desc limit 1",
+  const rights = await queryOne<{
+    basis: string | null;
+    approved_by: string | null;
+    evidence_uri: string | null;
+    rights_status: RightsStatus;
+    expiry: string | null;
+    expired: boolean;
+  }>(
+    // `to_char(...)` turns the date into plain "YYYY-MM-DD" text for the
+    // message below; `expiry_date < current_date` lets the database decide
+    // whether it has passed, using its own idea of "today".
+    `select basis, approved_by, evidence_uri, rights_status,
+            to_char(expiry_date, 'YYYY-MM-DD') as expiry,
+            coalesce(expiry_date < current_date, false) as expired
+     from rights_records where artifact_id = $1 order by created_at desc limit 1`,
     [artifactId]
   );
 
@@ -1212,6 +1261,12 @@ export async function checkRightsGate(artifactId: string): Promise<RightsGateSta
   if (!rights.basis) missing.push("basis");
   if (!rights.approved_by) missing.push("approved_by");
   if (!rights.evidence_uri) missing.push("evidence_uri");
+  // Each entry reads as "what's missing", since that's how the CLI shows
+  // this list ("rights record is missing: ...").
+  if (!APPROVED_RIGHTS_STATUSES.includes(rights.rights_status)) {
+    missing.push(`an approved rights_status (currently "${rights.rights_status}")`);
+  }
+  if (rights.expired) missing.push(`unexpired rights (expired ${rights.expiry})`);
   return { satisfied: missing.length === 0, missing };
 }
 
@@ -1219,7 +1274,8 @@ export async function checkRightsGate(artifactId: string): Promise<RightsGateSta
  * The only place in the whole app where a paper actually gets marked
  * "published". This does NOT approve the rights itself — it only checks
  * that `approveRights` has already been done (basis, approver, and
- * evidence all filled in), and refuses to publish otherwise, telling you
+ * evidence all filled in, an approved rights status, not expired -- see
+ * checkRightsGate), and refuses to publish otherwise, telling you
  * exactly what's still missing. Approving rights and publishing are kept
  * as two separate, deliberate steps on purpose, as a safety check.
  */
@@ -1234,17 +1290,21 @@ export async function checkRightsGate(artifactId: string): Promise<RightsGateSta
 export async function publishArtifact(
   artifactId: string
 ): Promise<{ title: string } | { missing: string[] }> {
-  const artifact = await queryOne<{ id: string; title: string; status: ArtifactStatus }>(
-    "select id, title, status from artifacts where id = $1",
-    [artifactId]
-  );
-  if (!artifact) throw new Error(`Unknown artifact: ${artifactId}`);
-  if (artifact.status === "published") return { title: artifact.title };
-
-  const gate = await checkRightsGate(artifactId);
-  if (!gate.satisfied) return { missing: gate.missing };
-
+  // The rights check and the status change happen inside one transaction,
+  // so the check can't go stale between being made and acted on.
   return withTransaction(async () => {
+    // `for update` locks this paper's row until the transaction finishes,
+    // so nothing else can change its status in the meantime.
+    const artifact = await queryOne<{ id: string; title: string; status: ArtifactStatus }>(
+      "select id, title, status from artifacts where id = $1 for update",
+      [artifactId]
+    );
+    if (!artifact) throw new Error(`Unknown artifact: ${artifactId}`);
+    if (artifact.status === "published") return { title: artifact.title };
+
+    const gate = await checkRightsGate(artifactId);
+    if (!gate.satisfied) return { missing: gate.missing };
+
     const now = new Date().toISOString();
     await query("update artifacts set status = 'published', published_at = $1 where id = $2", [
       now,
