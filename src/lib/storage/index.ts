@@ -9,7 +9,7 @@ import type { StorageProvider } from "./types";
 // file) instead of having to know it actually lives in a different,
 // more specific file.
 export type { StorageProvider, PutResult } from "./types";
-export { buildStorageKey } from "./types";
+export { buildStorageKey, StorageKeyExistsError } from "./types";
 
 let instance: StorageProvider | undefined;
 

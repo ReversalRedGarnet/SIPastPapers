@@ -3,7 +3,7 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { query, queryOne, queryWithoutRetry, withTransaction } from "./client";
 import { listBrowseYears } from "@/lib/browse-years";
-import { getStorageProvider } from "@/lib/storage";
+import { getStorageProvider, StorageKeyExistsError } from "@/lib/storage";
 import { buildStorageKey } from "@/lib/storage/types";
 import {
   artifactSlug,
@@ -765,6 +765,44 @@ export interface IngestArtifactResult {
   sha256: string;
 }
 
+function duplicateArtifactError(existingId: string): Error {
+  return new Error(
+    `An artifact already exists for this exam / subject / type / paper number (id ${existingId}). Edit the existing record instead of creating a duplicate.`
+  );
+}
+
+function sha256Hex(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Saves a newly ingested file to storage, never replacing anything that's
+ * already there (storage itself refuses -- see StorageKeyExistsError).
+ *
+ * The one case that's allowed through: the exact same bytes (same SHA-256)
+ * are already stored at this key. ingestArtifact has already confirmed no
+ * artifact uses this key, so that can only be a leftover from an earlier
+ * ingest of this same file that uploaded it and then failed before the
+ * database records were written. Reusing it is safe, and means simply
+ * re-running the ingest fixes things. Different bytes are refused.
+ */
+async function putWithoutOverwriting(storageKey: string, file: { buffer: Buffer; mime: string }, sha256: string) {
+  const storage = getStorageProvider();
+  try {
+    await storage.put(storageKey, file.buffer, file.mime);
+  } catch (err) {
+    if (!(err instanceof StorageKeyExistsError)) throw err;
+    const existing = await storage.get(storageKey);
+    if (!existing || sha256Hex(existing) !== sha256) {
+      throw new Error(
+        `Storage already holds a different file at "${storageKey}", with no artifact record pointing to it ` +
+          `(probably left over from an earlier ingest that failed partway). Refusing to overwrite it — ` +
+          `check that stored file by hand before removing it.`
+      );
+    }
+  }
+}
+
 /**
  * Adds one exam paper file into the archive: fingerprints the file (so we
  * can detect duplicates later), saves it to storage, and creates its
@@ -794,13 +832,19 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
     paperNo: input.paperNo,
   });
 
-  // We save the file to storage BEFORE touching the database, and outside
-  // the database transaction. That way, if saving the file fails, nothing
-  // gets written to the database at all. The one downside: if the file
-  // saves fine but the database step afterwards fails, we end up with a
-  // "orphaned" file sitting in storage with no database record pointing
-  // to it. That's an acceptable trade-off for now — a future version could
-  // add a cleanup process to find and remove those leftover files.
+  // The order of the steps below matters:
+  //   1. Refuse a duplicate artifact BEFORE touching storage. Storage keys
+  //      are built from the paper's details, so a duplicate would map to
+  //      the very same key as the paper already in the archive -- checking
+  //      only after saving used to silently replace a published paper's
+  //      file, and then fail.
+  //   2. Save the file, outside the database transaction, never replacing
+  //      anything (see putWithoutOverwriting). If saving fails, nothing
+  //      gets written to the database at all.
+  //   3. Write the database records in one transaction, checking for a
+  //      duplicate once more in case one appeared in the meantime.
+  // If step 3 fails after step 2 worked, the file is left in storage with
+  // no record pointing to it; re-running the same ingest reuses it.
   //
   // `createHash("sha256").update(bytes).digest("hex")` runs the file's raw
   // bytes through the SHA-256 hashing algorithm, producing a short, fixed-
@@ -808,7 +852,7 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
   // string). The same file always produces the same hash, and changing
   // even one byte produces a completely different one -- useful here for
   // detecting duplicate uploads and confirming a file hasn't been altered.
-  const sha256 = createHash("sha256").update(input.file.buffer).digest("hex");
+  const sha256 = sha256Hex(input.file.buffer);
   const fileName = generateCanonicalFileName({
     examSeriesSlug: series.code,
     year: input.year,
@@ -823,7 +867,17 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
     artifactType: artifactTypeSlug(input.artifactType),
     fileName,
   });
-  await getStorageProvider().put(storageKey, input.file.buffer, input.file.mime);
+
+  const existing = await queryOne<{ id: string }>(
+    `select a.id from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     where ei.exam_series_id = $1 and ei.year = $2 and a.subject_id = $3 and a.type = $4
+       and ((a.paper_no is null and $5::text is null) or a.paper_no = $5::text)`,
+    [series.id, input.year, subject.id, input.artifactType, input.paperNo]
+  );
+  if (existing) throw duplicateArtifactError(existing.id);
+
+  await putWithoutOverwriting(storageKey, input.file, sha256);
 
   // `withTransaction(async () => {...})` (see src/lib/db/client.ts) takes a
   // function containing every database change that has to succeed or fail
@@ -860,11 +914,7 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
          and ((paper_no is null and $4::text is null) or paper_no = $4::text)`,
       [examInstance.id, subject.id, input.artifactType, input.paperNo]
     );
-    if (duplicate) {
-      throw new Error(
-        `An artifact already exists for this exam / subject / type / paper number (id ${duplicate.id}). Edit the existing record instead of creating a duplicate.`
-      );
-    }
+    if (duplicate) throw duplicateArtifactError(duplicate.id);
 
     const artifactId = randomUUID();
     await query(

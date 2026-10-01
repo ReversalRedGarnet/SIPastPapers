@@ -6,7 +6,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import type { PutResult, StorageProvider } from "./types";
+import { StorageKeyExistsError, type PutResult, type StorageProvider } from "./types";
 
 export interface R2StorageConfig {
   accountId: string;
@@ -18,6 +18,11 @@ export interface R2StorageConfig {
 function isNotFoundError(err: unknown): boolean {
   const e = err as { name?: string; $metadata?: { httpStatusCode?: number } } | undefined;
   return e?.name === "NoSuchKey" || e?.name === "NotFound" || e?.$metadata?.httpStatusCode === 404;
+}
+
+function isPreconditionFailedError(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } } | undefined;
+  return e?.name === "PreconditionFailed" || e?.$metadata?.httpStatusCode === 412;
 }
 
 /**
@@ -57,14 +62,24 @@ export class R2Storage implements StorageProvider {
   }
 
   async put(key: string, data: Buffer, contentType?: string): Promise<PutResult> {
-    const response = await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
-        Body: data,
-        ContentType: contentType,
-      })
-    );
+    let response;
+    try {
+      response = await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Body: data,
+          ContentType: contentType,
+          // "Only save this if nothing exists at this key yet." R2 checks
+          // this itself, in the same step as the write, and answers 412
+          // Precondition Failed if something is already there.
+          IfNoneMatch: "*",
+        })
+      );
+    } catch (err) {
+      if (isPreconditionFailedError(err)) throw new StorageKeyExistsError(key);
+      throw err;
+    }
     // One concise line per upload — bucket name is already logged once at
     // startup (see getStorageProvider in src/lib/storage/index.ts), and
     // the request id/ETag/version id are only ever useful when actively

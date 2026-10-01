@@ -18,6 +18,24 @@ export interface PutResult {
   bytes: number;
 }
 
+/**
+ * Thrown by put() when something is already saved under that key. Storage
+ * never silently replaces a file (PROJECT_SPEC section 5.3) -- a public
+ * paper's stored bytes must keep matching the fingerprint recorded for it.
+ */
+// `extends Error` makes this a specialised kind of Error, so callers can
+// tell it apart from any other failure with `err instanceof
+// StorageKeyExistsError` and handle just this case.
+export class StorageKeyExistsError extends Error {
+  readonly key: string;
+
+  constructor(key: string) {
+    super(`Refusing to overwrite: something is already stored at "${key}"`);
+    this.name = "StorageKeyExistsError";
+    this.key = key;
+  }
+}
+
 // An interface (see src/types/domain.ts) can describe required *methods*
 // (actions something must be able to perform), not just plain data fields.
 // This says "anything claiming to be a StorageProvider must provide a
@@ -26,7 +44,7 @@ export interface PutResult {
 // actually works. local-fs.ts and r2.ts below are two very different
 // implementations of this same shared contract.
 export interface StorageProvider {
-  /** Saves the given bytes under `key`. It's up to whoever calls this to avoid accidentally overwriting an existing file. */
+  /** Saves the given bytes under `key`. Never overwrites: throws StorageKeyExistsError if something is already saved there. */
   // `contentType?: string` -- a `?` on a function parameter (as opposed to
   // an object field, see src/app/results/page.tsx) means this argument is
   // optional: callers can leave it out entirely.

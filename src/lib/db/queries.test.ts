@@ -13,10 +13,10 @@
  * throwaway folder, as before.
  */
 
-import { test, before, after } from "node:test";
+import { test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { query, queryOne, withRolledBackTransaction, closePool } from "./client";
@@ -24,6 +24,7 @@ import { artifactSlug } from "@/lib/artifact-naming";
 import type { CoverageCell } from "@/lib/db/queries";
 
 let queries: typeof import("@/lib/db/queries");
+let getStorageProvider: typeof import("@/lib/storage").getStorageProvider;
 let tmpStorageDir: string;
 
 before(async () => {
@@ -41,6 +42,16 @@ before(async () => {
   tmpStorageDir = mkdtempSync(path.join(tmpdir(), "sipp-queries-test-storage-"));
   process.env.SIPASTPAPERS_STORAGE_ROOT = tmpStorageDir;
   queries = await import("@/lib/db/queries");
+  ({ getStorageProvider } = await import("@/lib/storage"));
+});
+
+// Each test's database changes are rolled back, but stored files aren't part
+// of that transaction -- so empty the temporary storage folder after every
+// test too. Storage refuses to overwrite files, so without this a later test
+// ingesting the same paper details (but different bytes) would be refused.
+afterEach(() => {
+  rmSync(tmpStorageDir, { recursive: true, force: true });
+  mkdirSync(tmpStorageDir);
 });
 
 after(async () => {
@@ -366,4 +377,64 @@ test("coverage cell: a series/year with zero exam_instances row at all still app
     assert.equal(cell.byType.length, 1, "the type this series/subject tracks (from the 2016 row) should still be listed");
     assert.equal(byType(cell, "question_paper"), "missing");
   });
+});
+
+test("re-ingesting an existing paper is refused before storage is touched, so its stored file is unchanged", async () => {
+  await withRolledBackTransaction(async () => {
+    const original = Buffer.from("%PDF-1.4\n%no-overwrite-original\n");
+    const { storageKey } = await queries.ingestArtifact({
+      examSeriesCode: "sisc-l1",
+      year: 2099,
+      subjectSlug: "mathematics",
+      artifactType: "question_paper",
+      paperNo: "7",
+      file: { buffer: original, mime: "application/pdf" },
+    });
+
+    await assert.rejects(
+      queries.ingestArtifact({
+        examSeriesCode: "sisc-l1",
+        year: 2099,
+        subjectSlug: "mathematics",
+        artifactType: "question_paper",
+        paperNo: "7",
+        file: { buffer: Buffer.from("%PDF-1.4\n%no-overwrite-rescan\n"), mime: "application/pdf" },
+      }),
+      /already exists/
+    );
+
+    const stored = await getStorageProvider().get(storageKey);
+    assert.equal(stored?.toString(), original.toString(), "the original file must not have been replaced");
+  });
+});
+
+test("an orphaned upload is reused only if it's byte-for-byte the same file", async () => {
+  const input = {
+    examSeriesCode: "sisc-l1",
+    year: 2099,
+    subjectSlug: "mathematics",
+    artifactType: "question_paper" as const,
+    paperNo: "8",
+    file: { buffer: Buffer.from("%PDF-1.4\n%orphan\n"), mime: "application/pdf" },
+  };
+
+  // The first ingest's database rows are rolled back but its stored file
+  // stays -- the same state as an ingest that crashed after uploading.
+  const { storageKey } = await withRolledBackTransaction(() => queries.ingestArtifact(input));
+
+  // Re-running the same ingest picks up where it left off...
+  await withRolledBackTransaction(async () => {
+    const { artifactId } = await queries.ingestArtifact(input);
+    assert.ok(artifactId);
+  });
+
+  // ...but different bytes at that key are never overwritten.
+  await withRolledBackTransaction(async () => {
+    await assert.rejects(
+      queries.ingestArtifact({ ...input, file: { buffer: Buffer.from("%PDF-1.4\n%different\n"), mime: "application/pdf" } }),
+      /Storage already holds a different file/
+    );
+  });
+  const stored = await getStorageProvider().get(storageKey);
+  assert.equal(stored?.toString(), input.file.buffer.toString());
 });

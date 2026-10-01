@@ -6,6 +6,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { text } from "node:stream/consumers";
 import { LocalFilesystemStorage } from "./local-fs";
+import { StorageKeyExistsError } from "./types";
 
 function withTempStorage(fn: (storage: LocalFilesystemStorage) => Promise<void>) {
   const root = mkdtempSync(path.join(tmpdir(), "sipp-local-fs-test-"));
@@ -28,6 +29,20 @@ test(
     assert.ok(stream);
     assert.ok(stream instanceof Readable);
     assert.equal(await text(stream!), data.toString());
+  })
+);
+
+test(
+  "LocalFilesystemStorage.put refuses to overwrite an existing file and leaves it untouched",
+  withTempStorage(async (storage) => {
+    const key = "archive/sisc-l1/2020/mathematics/question-paper/paper-1.pdf";
+    await storage.put(key, Buffer.from("%PDF-1.4\n%original\n"));
+
+    await assert.rejects(
+      storage.put(key, Buffer.from("%PDF-1.4\n%replacement\n")),
+      (err) => err instanceof StorageKeyExistsError && err.key === key
+    );
+    assert.equal((await storage.get(key))!.toString(), "%PDF-1.4\n%original\n");
   })
 );
 

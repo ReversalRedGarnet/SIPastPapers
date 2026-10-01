@@ -17,6 +17,7 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { R2Storage } from "./r2";
+import { StorageKeyExistsError } from "./types";
 
 function notFoundError(name: string, httpStatusCode = 404) {
   const err = new Error(`${name} error`);
@@ -33,7 +34,10 @@ function createFakeS3Client() {
     objects,
     send: async (command: unknown) => {
       if (command instanceof PutObjectCommand) {
-        const { Key, Body, ContentType } = command.input;
+        const { Key, Body, ContentType, IfNoneMatch } = command.input;
+        // Like real R2: "If-None-Match: *" makes the write fail with 412
+        // when something is already stored at this key.
+        if (IfNoneMatch === "*" && objects.has(Key!)) throw notFoundError("PreconditionFailed", 412);
         objects.set(Key!, { body: Buffer.from(Body as Buffer), contentType: ContentType });
         return {};
       }
@@ -79,6 +83,42 @@ test("R2Storage put/get round-trips bytes through the (fake) bucket", async () =
   const readBack = await storage.get("archive/sisc-l1/2020/mathematics/question-paper/paper-1.pdf");
   assert.ok(readBack);
   assert.equal(readBack!.toString(), data.toString());
+});
+
+test("R2Storage.put refuses to overwrite an existing object and leaves it untouched", async () => {
+  const fake = createFakeS3Client();
+  const storage = new R2Storage(
+    { accountId: "acct", accessKeyId: "key", secretAccessKey: "secret", bucketName: "test-bucket" },
+    fake
+  );
+  const key = "archive/sisc-l1/2020/mathematics/question-paper/paper-1.pdf";
+
+  await storage.put(key, Buffer.from("%PDF-1.4\n%original\n"), "application/pdf");
+  await assert.rejects(
+    storage.put(key, Buffer.from("%PDF-1.4\n%replacement\n"), "application/pdf"),
+    (err) => err instanceof StorageKeyExistsError && err.key === key
+  );
+
+  const readBack = await storage.get(key);
+  assert.equal(readBack!.toString(), "%PDF-1.4\n%original\n");
+});
+
+test("R2Storage.put asks R2 itself to refuse overwrites (If-None-Match: *)", async () => {
+  const sent: PutObjectCommand[] = [];
+  const fake = createFakeS3Client();
+  const recordingClient = {
+    send: async (command: unknown) => {
+      if (command instanceof PutObjectCommand) sent.push(command);
+      return fake.send(command);
+    },
+  };
+  const storage = new R2Storage(
+    { accountId: "acct", accessKeyId: "key", secretAccessKey: "secret", bucketName: "test-bucket" },
+    recordingClient as unknown as ConstructorParameters<typeof R2Storage>[1]
+  );
+
+  await storage.put("a.pdf", Buffer.from("%PDF-1.4\n"));
+  assert.equal(sent[0]?.input.IfNoneMatch, "*");
 });
 
 test("R2Storage.get returns null for a missing key instead of throwing", async () => {

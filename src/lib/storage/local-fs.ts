@@ -1,7 +1,7 @@
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import type { PutResult, StorageProvider } from "./types";
+import { StorageKeyExistsError, type PutResult, type StorageProvider } from "./types";
 
 /**
  * Saves files on the local disk, under `<project folder>/local-storage/<key>`.
@@ -45,7 +45,15 @@ export class LocalFilesystemStorage implements StorageProvider {
   async put(key: string, data: Buffer): Promise<PutResult> {
     const dest = this.resolve(key);
     await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.writeFile(dest, data);
+    try {
+      // The "wx" flag means "create this file, but fail if it already
+      // exists" -- checked by the operating system in the same step as the
+      // write, so there's no gap in which another write could sneak in.
+      await fs.writeFile(dest, data, { flag: "wx" });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") throw new StorageKeyExistsError(key);
+      throw err;
+    }
     return { key, bytes: data.byteLength };
   }
 
