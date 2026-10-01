@@ -536,7 +536,7 @@ async function runCoverage(): Promise<void> {
     // multi-type breakdown, not just one of the four fixed labels), so it's
     // measured from every real cell in the column rather than from
     // COVERAGE_LABEL alone.
-    const colWidths = subjects.map((subject, i) => {
+    const colWidths = subjects.map((subject) => {
       const rendered = years.map((year) => {
         const cell = cellFor(series.code, year, subject.slug);
         return cell ? renderCell(cell) : COVERAGE_LABEL.missing;
