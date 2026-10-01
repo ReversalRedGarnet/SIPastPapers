@@ -110,13 +110,17 @@ This was a deliberate choice, not an oversight: a genuine dual-mode would
 need either two divergent SQL dialects per query (`?` vs `$1`, `ON
 CONFLICT`, boolean/jsonb handling all differ) or a query-builder
 abstraction thick enough to become the "heavy ORM" this project explicitly
-avoided elsewhere. Neon branching makes obtaining a live connection cheap
-(the same credentials work for dev, and the test suite runs every write
-inside a transaction that's always rolled back — see
-`src/lib/db/queries.test.ts` — so it never touches real data), so the
-downside of dropping the sqlite fallback is small. Run
-`npm run db:migrate` once against a fresh database before `npm run dev`,
-`npm run cli`, or `npm run test`.
+avoided elsewhere. Neon branching makes obtaining a live connection cheap,
+so the downside of dropping the sqlite fallback is small. Run
+`npm run db:migrate` once against a fresh database before `npm run dev`
+or `npm run cli`.
+
+The test suite never uses `.env.local`'s database. It connects to a
+separate Neon **branch** whose pooled connection string goes in
+`.env.test.local` (gitignored) as `DATABASE_URL_POOLED`, and refuses to
+run if that file is missing or points at the same database endpoint as
+`.env.local` (`src/lib/db/test-database-env.ts`). Every test write also
+runs inside a transaction that's always rolled back.
 
 ## Stack
 
@@ -145,7 +149,7 @@ npm run dev                  # http://localhost:3000 (public site only)
 npm run cli -- coverage      # admin CLI — try `npm run cli -- help` for all commands
 npm run build                # production build + typecheck
 npm run lint
-npm run test                 # node:test via tsx --test
+npm run test                 # node:test via tsx --test; needs .env.test.local (Neon branch), see above
 ```
 
 Any locally-stored uploaded files are created on first run under

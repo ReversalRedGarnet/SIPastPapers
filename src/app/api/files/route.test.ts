@@ -14,9 +14,10 @@
  */
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { loadTestDatabaseEnv } from "@/lib/db/test-database-env";
 import { NextRequest } from "next/server";
 import { query, withRolledBackTransaction, closePool } from "@/lib/db/client";
 
@@ -25,9 +26,9 @@ let GET: typeof import("./[fileId]/route").GET;
 let tmpStorageDir: string;
 
 before(async () => {
-  if (existsSync(".env.local")) {
-    process.loadEnvFile(".env.local");
-  }
+  // Connects to the separate test database in .env.test.local, and refuses
+  // to run if that's the real database -- see test-database-env.ts.
+  loadTestDatabaseEnv();
   process.env.STORAGE_BACKEND = "local";
   process.env.DB_POOL_PROFILE = "cli";
   tmpStorageDir = mkdtempSync(path.join(tmpdir(), "sipp-files-route-test-storage-"));

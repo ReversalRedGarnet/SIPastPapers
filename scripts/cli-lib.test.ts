@@ -12,9 +12,10 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { loadTestDatabaseEnv } from "@/lib/db/test-database-env";
 import { BASIS_CHOICES, isValidBasis } from "./cli-lib";
 
 test("isValidBasis accepts every documented choice", () => {
@@ -33,9 +34,9 @@ let tmpStorageDir: string;
 let tmpFilesDir: string;
 
 before(() => {
-  if (existsSync(".env.local")) {
-    process.loadEnvFile(".env.local");
-  }
+  // Connects to the separate test database in .env.test.local, and refuses
+  // to run if that's the real database -- see test-database-env.ts.
+  loadTestDatabaseEnv();
   // Force local storage regardless of whatever STORAGE_BACKEND is set to
   // for real usage in .env.local (e.g. "r2") — this suite only needs
   // DATABASE_URL_POOLED from that file, and must never touch real R2.

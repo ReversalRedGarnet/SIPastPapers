@@ -3,22 +3,23 @@
  * its rights record has all three of basis, approved_by, and evidence_uri
  * filled in via approveRights — and it should succeed once they are.
  *
- * These tests run against the real database, but every test is wrapped in
- * withRolledBackTransaction (see src/lib/db/client.ts), which always
- * undoes its changes at the end. So nothing here is ever actually saved
- * for real, no matter how many times these tests run. You do need to have
- * run `npm run db:migrate` at least once against the database beforehand
- * (to set up the tables and basic reference data) — these tests don't use
- * a separate test database. File storage is written to a temporary
- * throwaway folder, as before.
+ * These tests run against a separate test database -- a Neon branch whose
+ * connection string is in .env.test.local -- and refuse to start if that
+ * points at the real database (see test-database-env.ts). Every test is
+ * also wrapped in withRolledBackTransaction (see src/lib/db/client.ts),
+ * which always undoes its changes at the end. The test database needs to
+ * have had `npm run db:migrate` run against it once (to set up the tables
+ * and basic reference data) -- a branch of the real database already has.
+ * File storage is written to a temporary throwaway folder.
  */
 
 import { test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { loadTestDatabaseEnv } from "./test-database-env";
 import { query, queryOne, withRolledBackTransaction, closePool } from "./client";
 import { artifactSlug } from "@/lib/artifact-naming";
 import type { CoverageCell } from "@/lib/db/queries";
@@ -28,9 +29,9 @@ let getStorageProvider: typeof import("@/lib/storage").getStorageProvider;
 let tmpStorageDir: string;
 
 before(async () => {
-  if (existsSync(".env.local")) {
-    process.loadEnvFile(".env.local");
-  }
+  // Connects to the separate test database in .env.test.local, and refuses
+  // to run if that's the real database -- see test-database-env.ts.
+  loadTestDatabaseEnv();
   // Force this test to use local file storage, no matter what's set up
   // for regular use (e.g. cloud storage) — these tests only need the
   // database connection and must never touch real cloud storage.
