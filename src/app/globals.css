@@ -884,7 +884,6 @@ th {
   border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--color-surface);
-  min-height: 24rem;
 }
 
 .pdf-frame {

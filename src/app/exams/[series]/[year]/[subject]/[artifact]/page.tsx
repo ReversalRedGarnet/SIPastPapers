@@ -5,6 +5,7 @@ import { getPublicArtifactBySlug, listSubjectArtifacts } from "@/lib/db/queries"
 import { artifactListLabel } from "@/lib/artifact-naming";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
 import { CONTACT_EMAIL, SITE_NAME, SITE_URL } from "@/lib/site";
+import { PdfPreview } from "@/components/PdfPreview";
 import { reportIssueAction } from "./actions";
 
 interface DocumentPageProps {
@@ -215,7 +216,11 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
 
         <div className="doc-viewer">
           {record.file ? (
-            <iframe src={`/api/files/${record.file.id}`} className="pdf-frame" title={`Preview of ${record.title}`} />
+            <PdfPreview
+              src={`/api/files/${record.file.id}`}
+              title={`Preview of ${record.title}`}
+              sizeLabel={formatBytes(record.file.bytes)}
+            />
           ) : (
             <div className="empty-state" style={{ border: "none" }}>
               No file to preview yet.
