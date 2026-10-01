@@ -1,18 +1,29 @@
 import { Readable } from "node:stream";
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import { StorageKeyExistsError, type PutResult, type StorageProvider } from "./types";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { StorageKeyExistsError, type PutOptions, type PutResult, type StorageProvider } from "./types";
 
 export interface R2StorageConfig {
   accountId: string;
   accessKeyId: string;
   secretAccessKey: string;
   bucketName: string;
+}
+
+/** The headers R2 has stored for one file (what it sends back when the file is downloaded). */
+export interface StoredObjectInfo {
+  contentType?: string;
+  contentDisposition?: string;
+  contentLength?: number;
+  etag?: string;
+  lastModified?: Date;
 }
 
 function isNotFoundError(err: unknown): boolean {
@@ -46,12 +57,18 @@ export class R2Storage implements StorageProvider {
   // fake object in place of a real S3Client (see the comment above).
   private readonly client: Pick<S3Client, "send">;
   private readonly bucket: string;
+  // Making a presigned link needs the full, real connection (it signs the
+  // link with the account's credentials), not just `send` -- so it's only
+  // available when this class made that connection itself, not with a
+  // test's fake stand-in.
+  private readonly realClient?: S3Client;
 
   constructor(config: R2StorageConfig, client?: Pick<S3Client, "send">) {
     this.bucket = config.bucketName;
-    this.client =
-      client ??
-      new S3Client({
+    if (client) {
+      this.client = client;
+    } else {
+      this.realClient = new S3Client({
         region: "auto",
         endpoint: `https://${config.accountId}.r2.cloudflarestorage.com`,
         credentials: {
@@ -59,9 +76,11 @@ export class R2Storage implements StorageProvider {
           secretAccessKey: config.secretAccessKey,
         },
       });
+      this.client = this.realClient;
+    }
   }
 
-  async put(key: string, data: Buffer, contentType?: string): Promise<PutResult> {
+  async put(key: string, data: Buffer, options: PutOptions = {}): Promise<PutResult> {
     let response;
     try {
       response = await this.client.send(
@@ -69,7 +88,11 @@ export class R2Storage implements StorageProvider {
           Bucket: this.bucket,
           Key: key,
           Body: data,
-          ContentType: contentType,
+          ContentType: options.contentType,
+          // Stored with the file, and sent back by R2 whenever the file is
+          // downloaded straight from R2 -- this is what gives a downloaded
+          // paper its readable name.
+          ContentDisposition: options.contentDisposition,
           // "Only save this if nothing exists at this key yet." R2 checks
           // this itself, in the same step as the write, and answers 412
           // Precondition Failed if something is already there.
@@ -139,6 +162,78 @@ export class R2Storage implements StorageProvider {
 
   async delete(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
+  // The three methods below are R2-only (they aren't part of the shared
+  // StorageProvider interface): they're used by the CLI's inspect-object
+  // and set-disposition commands to manage the headers R2 sends when a
+  // file is downloaded straight from R2.
+
+  /** The headers R2 has stored for this file, or null if there's no file at `key`. */
+  async describe(key: string): Promise<StoredObjectInfo | null> {
+    try {
+      const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return {
+        contentType: head.ContentType,
+        contentDisposition: head.ContentDisposition,
+        contentLength: head.ContentLength,
+        etag: head.ETag,
+        lastModified: head.LastModified,
+      };
+    } catch (err) {
+      if (isNotFoundError(err)) return null;
+      throw err;
+    }
+  }
+
+  /**
+   * Changes the Content-Disposition header stored with an existing file,
+   * without touching the file's bytes. R2 (like S3) can't edit a stored
+   * file's headers directly, so this copies the file onto itself with
+   * replacement headers ("MetadataDirective: REPLACE").
+   *
+   * Two safety details: every other stored header is copied over
+   * unchanged (REPLACE would otherwise drop them), and the copy only
+   * happens if the file is still exactly the one just looked at (its ETag
+   * fingerprint matches) -- so this can never swap in different content.
+   */
+  async setContentDisposition(key: string, contentDisposition: string): Promise<StoredObjectInfo> {
+    const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        // "<bucket>/<key>", with each part of the key URL-encoded, as the
+        // copy-source format requires.
+        CopySource: `${this.bucket}/${key.split("/").map(encodeURIComponent).join("/")}`,
+        CopySourceIfMatch: head.ETag,
+        MetadataDirective: "REPLACE",
+        ContentDisposition: contentDisposition,
+        ContentType: head.ContentType,
+        CacheControl: head.CacheControl,
+        ContentEncoding: head.ContentEncoding,
+        ContentLanguage: head.ContentLanguage,
+        Metadata: head.Metadata,
+      })
+    );
+    const after = await this.describe(key);
+    if (!after) throw new Error(`"${key}" disappeared from R2 while its headers were being updated`);
+    return after;
+  }
+
+  /**
+   * A temporary link that downloads this file straight from R2, valid for
+   * `expiresInSeconds`. Anyone holding the link can download the file until
+   * it expires, so only hand these out for files that are allowed to be
+   * public.
+   */
+  async presignedGetUrl(key: string, expiresInSeconds: number): Promise<string> {
+    if (!this.realClient) {
+      throw new Error("presignedGetUrl needs a real R2 connection (it isn't available with a test client).");
+    }
+    return getSignedUrl(this.realClient, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
+      expiresIn: expiresInSeconds,
+    });
   }
 
   locate(key: string): string {

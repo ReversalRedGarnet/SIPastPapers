@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getFileForDownload } from "@/lib/db/queries";
 import { getStorageProvider } from "@/lib/storage";
-import { generateDownloadFilename } from "@/lib/artifact-naming";
+import { contentDispositionHeader } from "@/lib/artifact-naming";
 
 /**
  * Serves the original PDF for a published exam paper. Direct PDF download
@@ -41,13 +41,12 @@ export async function GET(
   }
 
   const download = request.nextUrl.searchParams.get("dl") === "1";
-  const filename = generateDownloadFilename(file.title);
 
   return new NextResponse(new Uint8Array(bytes), {
     status: 200,
     headers: {
       "Content-Type": file.mime,
-      "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${filename}"`,
+      "Content-Disposition": contentDispositionHeader(download ? "attachment" : "inline", file.title),
       "Content-Length": String(file.bytes),
       "X-Content-Type-Options": "nosniff",
       // A paper's rights/publication status can change at any moment, so

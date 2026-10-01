@@ -19,6 +19,19 @@ export interface PutResult {
 }
 
 /**
+ * Extra details stored alongside a file, for storage systems that serve
+ * files directly to browsers (R2). Local disk storage ignores them -- its
+ * files are only ever served through our own /api/files route, which sets
+ * these headers itself.
+ */
+export interface PutOptions {
+  /** e.g. "application/pdf" */
+  contentType?: string;
+  /** The Content-Disposition header to send with the file -- see contentDispositionHeader in src/lib/artifact-naming.ts. */
+  contentDisposition?: string;
+}
+
+/**
  * Thrown by put() when something is already saved under that key. Storage
  * never silently replaces a file (PROJECT_SPEC section 5.3) -- a public
  * paper's stored bytes must keep matching the fingerprint recorded for it.
@@ -45,10 +58,10 @@ export class StorageKeyExistsError extends Error {
 // implementations of this same shared contract.
 export interface StorageProvider {
   /** Saves the given bytes under `key`. Never overwrites: throws StorageKeyExistsError if something is already saved there. */
-  // `contentType?: string` -- a `?` on a function parameter (as opposed to
+  // `options?: PutOptions` -- a `?` on a function parameter (as opposed to
   // an object field, see src/app/results/page.tsx) means this argument is
   // optional: callers can leave it out entirely.
-  put(key: string, data: Buffer, contentType?: string): Promise<PutResult>;
+  put(key: string, data: Buffer, options?: PutOptions): Promise<PutResult>;
 
   /** Reads the full contents saved at `key`, or returns null if nothing is there. */
   get(key: string): Promise<Buffer | null>;

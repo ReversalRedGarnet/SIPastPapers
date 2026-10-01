@@ -21,12 +21,16 @@ import {
   getCoverageMatrix,
   ingestArtifact,
   listAllArtifacts,
+  listStoredFiles,
   publishArtifact,
   unpublishArtifact,
   type CoverageCell,
   type CoverageStatus,
+  type StoredFile,
 } from "@/lib/db/queries";
-import { artifactTypeSlug } from "@/lib/artifact-naming";
+import { artifactTypeSlug, contentDispositionHeader } from "@/lib/artifact-naming";
+import { getStorageProvider } from "@/lib/storage";
+import { R2Storage, type StoredObjectInfo } from "@/lib/storage/r2";
 import type { ArtifactStatus, ArtifactType, RightsStatus } from "@/types/domain";
 import {
   BASIS_CHOICES,
@@ -471,6 +475,152 @@ async function runList(): Promise<void> {
   }
 }
 
+// --- R2 object headers -------------------------------------------------------
+
+// How long the presigned check link printed by inspect-object and
+// set-disposition stays valid.
+const PRESIGNED_CHECK_SECONDS = 300;
+
+const SHOWN_RESPONSE_HEADERS = [
+  "content-type",
+  "content-disposition",
+  "content-length",
+  "content-range",
+  "accept-ranges",
+  "etag",
+  "last-modified",
+  "cache-control",
+];
+
+function requireR2Storage(): R2Storage {
+  const storage = getStorageProvider();
+  if (!(storage instanceof R2Storage)) {
+    fail("This command only works with STORAGE_BACKEND=r2 (plus the R2_* settings) in .env.local.");
+  }
+  return storage;
+}
+
+async function findStoredFile(flags: Record<string, string>): Promise<StoredFile> {
+  const key = flags.key;
+  const fileId = flags["file-id"];
+  if (Boolean(key) === Boolean(fileId)) fail("Give exactly one of --key <storage-key> or --file-id <id>.");
+  const match = (await listStoredFiles()).find((f) => (key ? f.storageKey === key : f.fileId === fileId));
+  if (!match) fail(`No file record found for ${key ? `key "${key}"` : `file id ${fileId}`}.`);
+  return match;
+}
+
+function printStoredInfo(label: string, info: StoredObjectInfo | null): void {
+  console.log(`${label}:`);
+  if (!info) {
+    console.log("  (no object in R2 at this key)");
+    return;
+  }
+  console.log(`  Content-Type:        ${info.contentType ?? "(none)"}`);
+  console.log(`  Content-Disposition: ${info.contentDisposition ?? "(none)"}`);
+  console.log(`  Content-Length:      ${info.contentLength ?? "?"}`);
+  console.log(`  ETag:                ${info.etag ?? "?"}`);
+  console.log(`  Last-Modified:       ${info.lastModified?.toISOString() ?? "?"}`);
+}
+
+/**
+ * Fetches the file through a real presigned R2 link -- exactly what a
+ * visitor's browser would be sent to -- and prints the headers R2 actually
+ * answers with. Asks for just the first byte (a Range request), so this
+ * check doesn't download the whole file.
+ */
+async function printPresignedResponse(storage: R2Storage, key: string): Promise<void> {
+  const url = await storage.presignedGetUrl(key, PRESIGNED_CHECK_SECONDS);
+  const response = await fetch(url, { headers: { Range: "bytes=0-0" } });
+  console.log("\nResponse from a presigned R2 link (GET, Range: bytes=0-0):");
+  console.log(`  HTTP ${response.status} ${response.statusText}`);
+  for (const name of SHOWN_RESPONSE_HEADERS) {
+    console.log(`  ${name}: ${response.headers.get(name) ?? "(not sent)"}`);
+  }
+  await response.body?.cancel();
+  console.log(`\nPresigned link, valid for ${PRESIGNED_CHECK_SECONDS / 60} minutes (to try in a browser):\n  ${url}`);
+}
+
+async function runInspectObject(args: ParsedArgs): Promise<void> {
+  const storage = requireR2Storage();
+  const file = await findStoredFile(args.flags);
+  console.log(`${file.title}\n  key: ${file.storageKey}\n  file id: ${file.fileId} (${file.status})\n`);
+  printStoredInfo("Stored in R2", await storage.describe(file.storageKey));
+  await printPresignedResponse(storage, file.storageKey);
+}
+
+async function runSetDispositionOne(storage: R2Storage, flags: Record<string, string>): Promise<void> {
+  const file = await findStoredFile(flags);
+  const target = contentDispositionHeader("inline", file.title);
+  console.log(`${file.title}\n  key: ${file.storageKey}\n  file id: ${file.fileId} (${file.status})\n`);
+
+  const before = await storage.describe(file.storageKey);
+  printStoredInfo("Before", before);
+  if (!before) fail("Nothing to update.");
+  if (before.contentDisposition === target) {
+    console.log("\nAlready set -- no change made.");
+  } else {
+    printStoredInfo("\nAfter", await storage.setContentDisposition(file.storageKey, target));
+  }
+  await printPresignedResponse(storage, file.storageKey);
+}
+
+async function runSetDispositionAll(storage: R2Storage, confirm: boolean): Promise<void> {
+  // Several file records can't share a key in practice, but de-duplicate
+  // anyway so no object is rewritten twice.
+  const files = [...new Map((await listStoredFiles()).map((f) => [f.storageKey, f])).values()];
+  let alreadySet = 0;
+  let missing = 0;
+  let updated = 0;
+  let failed = 0;
+  const pending: StoredFile[] = [];
+
+  for (const file of files) {
+    const info = await storage.describe(file.storageKey);
+    if (!info) {
+      missing++;
+      console.log(`MISSING  ${file.storageKey}`);
+    } else if (info.contentDisposition === contentDispositionHeader("inline", file.title)) {
+      alreadySet++;
+    } else {
+      pending.push(file);
+    }
+  }
+
+  if (!confirm) {
+    for (const file of pending) console.log(`WOULD UPDATE  ${file.storageKey}`);
+    console.log(
+      `\n${files.length} objects: ${pending.length} would be updated, ${alreadySet} already set, ${missing} missing from R2.` +
+        `\nDry run -- nothing changed. Re-run with --confirm to update.`
+    );
+    return;
+  }
+
+  for (const file of pending) {
+    try {
+      await storage.setContentDisposition(file.storageKey, contentDispositionHeader("inline", file.title));
+      updated++;
+      console.log(`UPDATED  ${file.storageKey}`);
+    } catch (err) {
+      failed++;
+      console.error(`FAILED   ${file.storageKey}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  console.log(
+    `\n${files.length} objects: ${updated} updated, ${alreadySet} already set, ${missing} missing from R2, ${failed} failed.`
+  );
+  if (failed > 0) process.exitCode = 1;
+}
+
+async function runSetDisposition(args: ParsedArgs): Promise<void> {
+  const storage = requireR2Storage();
+  if (args.flags.all) {
+    if (args.flags.key || args.flags["file-id"]) fail("--all can't be combined with --key or --file-id.");
+    await runSetDispositionAll(storage, args.flags.confirm === "true");
+  } else {
+    await runSetDispositionOne(storage, args.flags);
+  }
+}
+
 // --- coverage ---------------------------------------------------------------
 
 const COVERAGE_LABEL: Record<CoverageStatus, string> = {
@@ -635,6 +785,21 @@ Commands:
 
   coverage
       Print the year x subject coverage matrix.
+
+  inspect-object (--key <storage-key> | --file-id <id>)
+      R2 only, read-only. Show the headers R2 has stored for one file, then
+      fetch it through a real presigned R2 link and show the headers R2
+      actually sends back (plus the link, to try in a browser).
+
+  set-disposition (--key <storage-key> | --file-id <id>)
+      R2 only. Set one file's stored Content-Disposition to "inline" with
+      its readable file name (ASCII filename + UTF-8 filename*), without
+      changing its bytes, then show the before/after headers and the
+      presigned-link check. New ingests get this automatically.
+
+  set-disposition --all [--confirm]
+      Same for every file in the database. Without --confirm this only
+      lists what would change -- same dry-run-by-default pattern as ingest.
 `;
 
 async function main(): Promise<void> {
@@ -666,6 +831,12 @@ async function main(): Promise<void> {
       break;
     case "coverage":
       await runCoverage();
+      break;
+    case "inspect-object":
+      await runInspectObject(args);
+      break;
+    case "set-disposition":
+      await runSetDisposition(args);
       break;
     case undefined:
     case "help":

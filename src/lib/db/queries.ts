@@ -8,6 +8,7 @@ import { buildStorageKey } from "@/lib/storage/types";
 import {
   artifactSlug,
   artifactTypeSlug,
+  contentDispositionHeader,
   generateArtifactTitle,
   generateCanonicalFileName,
 } from "@/lib/artifact-naming";
@@ -786,10 +787,20 @@ function sha256Hex(bytes: Buffer): string {
  * database records were written. Reusing it is safe, and means simply
  * re-running the ingest fixes things. Different bytes are refused.
  */
-async function putWithoutOverwriting(storageKey: string, file: { buffer: Buffer; mime: string }, sha256: string) {
+async function putWithoutOverwriting(
+  storageKey: string,
+  file: { buffer: Buffer; mime: string },
+  sha256: string,
+  title: string
+) {
   const storage = getStorageProvider();
   try {
-    await storage.put(storageKey, file.buffer, file.mime);
+    await storage.put(storageKey, file.buffer, {
+      contentType: file.mime,
+      // "inline" lets the browser show the PDF; the file name comes from
+      // the paper's title. Used when the file is served straight from R2.
+      contentDisposition: contentDispositionHeader("inline", title),
+    });
   } catch (err) {
     if (!(err instanceof StorageKeyExistsError)) throw err;
     const existing = await storage.get(storageKey);
@@ -877,7 +888,7 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
   );
   if (existing) throw duplicateArtifactError(existing.id);
 
-  await putWithoutOverwriting(storageKey, input.file, sha256);
+  await putWithoutOverwriting(storageKey, input.file, sha256, title);
 
   // `withTransaction(async () => {...})` (see src/lib/db/client.ts) takes a
   // function containing every database change that has to succeed or fail
@@ -1057,6 +1068,28 @@ async function hydrateArtifactSummary(row: ArtifactBaseRow): Promise<ArtifactSum
     rightsStatus: rights?.rights_status ?? "unknown",
     hasFile: Number(fileCount?.n ?? 0) > 0,
   };
+}
+
+export interface StoredFile {
+  fileId: string;
+  storageKey: string;
+  title: string;
+  status: ArtifactStatus;
+}
+
+/**
+ * Every file record with its paper's title and status, regardless of
+ * whether the paper is public -- for the CLI's storage maintenance
+ * commands (e.g. set-disposition), never for public pages.
+ */
+export async function listStoredFiles(): Promise<StoredFile[]> {
+  const rows = await query<{ file_id: string; storage_key: string; title: string; status: ArtifactStatus }>(
+    `select f.id as file_id, f.storage_key, a.title, a.status
+     from files f
+     join artifacts a on a.id = f.artifact_id
+     order by f.storage_key`
+  );
+  return rows.map((r) => ({ fileId: r.file_id, storageKey: r.storage_key, title: r.title, status: r.status }));
 }
 
 export async function listAllArtifacts(): Promise<ArtifactSummary[]> {
