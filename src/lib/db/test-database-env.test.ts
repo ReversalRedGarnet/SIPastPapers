@@ -67,3 +67,22 @@ test("uses the branch database, overriding any connection string already in the 
   assert.equal(process.env.DATABASE_URL_POOLED, branchUrl);
   assert.equal(process.env.DATABASE_URL, undefined);
 });
+
+test("refuses to run if any R2 settings are in the environment", () => {
+  writeFileSync(
+    files.testEnvFile,
+    "DATABASE_URL_POOLED=postgresql://u:p@ep-branch-456-pooler.ap-southeast-2.aws.neon.tech/db?sslmode=require\n"
+  );
+  process.env.R2_BUCKET_NAME = "sipastpapers";
+  assert.throws(() => loadTestDatabaseEnv(files), /R2 settings are present in the environment \(R2_BUCKET_NAME\)/);
+});
+
+test("forces local file storage", () => {
+  writeFileSync(
+    files.testEnvFile,
+    "DATABASE_URL_POOLED=postgresql://u:p@ep-branch-456-pooler.ap-southeast-2.aws.neon.tech/db?sslmode=require\n"
+  );
+  process.env.STORAGE_BACKEND = "r2";
+  loadTestDatabaseEnv(files);
+  assert.equal(process.env.STORAGE_BACKEND, "local");
+});

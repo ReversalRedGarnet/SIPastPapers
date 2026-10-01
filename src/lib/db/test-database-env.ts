@@ -11,10 +11,12 @@ import { parseEnv } from "node:util";
  *   DATABASE_URL_POOLED=postgresql://...@ep-<branch-endpoint>-pooler.<region>.aws.neon.tech/...
  *
  * As a safety check, this refuses to run at all -- throwing before any
- * test can connect -- if that file is missing, or if it points at the same
+ * test can connect -- if that file is missing, if it points at the same
  * database server as `.env.local` (the real database, used by the site and
- * the CLI). Tests insert rows inside transactions that are always rolled
- * back, but a bug in a test should never be able to touch real data.
+ * the CLI), or if any R2_* storage settings are in the environment. It
+ * also forces local file storage. Tests insert rows inside transactions
+ * that are always rolled back, but a bug in a test should never be able
+ * to touch real data or real stored files.
  */
 
 interface TestDatabaseEnvFiles {
@@ -67,6 +69,19 @@ export function loadTestDatabaseEnv({
       );
     }
   }
+
+  // Tests must never be able to write to the real file storage bucket.
+  // Nothing here loads R2 settings (only DATABASE_URL_POOLED is read from
+  // .env.test.local), so if any are present they came from the shell --
+  // refuse rather than risk a test reaching the real bucket.
+  const r2Variables = Object.keys(process.env).filter((name) => name.startsWith("R2_"));
+  if (r2Variables.length > 0) {
+    throw new Error(
+      `Refusing to run database tests: R2 settings are present in the environment (${r2Variables.join(", ")}). ` +
+        `Tests must only ever use local file storage -- unset these first.`
+    );
+  }
+  process.env.STORAGE_BACKEND = "local";
 
   // Set explicitly (overwriting anything inherited from the shell) so the
   // test database is the only one the connection pool can see.
