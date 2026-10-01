@@ -93,11 +93,13 @@ in the repository.
     any of them throws immediately rather than silently using local
     storage. The PDF download/view route
     ([`src/app/api/files/[fileId]/route.ts`](./src/app/api/files/[fileId]/route.ts))
-    always proxies bytes through the app (streams `StorageProvider.get()`
-    to the client) rather than redirecting to a presigned R2 URL, so it
-    keeps re-checking the artifact's rights/publication status on every
-    request — a presigned URL would stay valid for its TTL even after a
-    rights change.
+    re-checks the paper's publication and rights status on every request,
+    applies the download rate limit, then redirects (302) to a presigned
+    R2 URL valid for 10 minutes — so PDF bytes never pass through the app.
+    A paper that's unpublished stops being handed out at once; a link
+    handed out just before stays valid until it expires (accepted, see
+    PROJECT_SPEC section 5.1). With local storage the route streams the
+    file itself instead.
   - `next dev`/`build`/`start` load `.env.local` automatically; the CLI
     loads it itself (`process.loadEnvFile`) since it runs outside the
     Next.js runtime.

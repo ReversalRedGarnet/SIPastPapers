@@ -138,18 +138,21 @@ download/view route) never depend on which one is active:
   `R2_BUCKET_NAME` (`.env.example`); missing any of them throws
   immediately rather than silently falling back to local storage.
 
-File serving (`src/app/api/files/[fileId]/route.ts`) always proxies
-bytes through the app — it calls `StorageProvider.get()` and streams the
-result to the client — for both backends, rather than redirecting to a
-presigned R2 URL. This was a deliberate choice: the route already
-re-checks the artifact's live `published` status on every request before
-touching storage (section 17.1 invariant), and a presigned URL would
-remain valid for its TTL even if that status changed a moment after the
-URL was minted. Proxying keeps "never serve a stale cached copy" true
-for R2 the same way it already was for local disk. Exam PDFs are small
-enough that streaming through the app adds no meaningful latency; this
-should be revisited only if file sizes or traffic volume make proxying
-a bottleneck.
+File serving (`src/app/api/files/[fileId]/route.ts`) re-checks, on
+every request, that the paper is published, its rights are currently
+approved and unexpired, and the file is its current one (section 17.1
+invariant), applies the download rate limit, and then redirects (302,
+`Cache-Control: private, no-store`) to a presigned R2 URL valid for 10
+minutes. R2 serves the bytes directly, with the headers stored on each
+object at ingest (`Content-Type`, `Content-Disposition: inline` with the
+paper's readable filename, `Cache-Control: private, max-age=600`), and
+handles Range requests so interrupted downloads can resume. With local
+storage (development) the route streams the file itself.
+
+This replaced the original "always proxy bytes through the app" design
+(see the decision log, 2026-10-01). The trade-off, accepted explicitly:
+a presigned URL handed out just before a paper is unpublished stays
+valid until it expires — at most 10 minutes.
 
 ### 5.2 Storage layout
 
@@ -695,6 +698,14 @@ The project owner should control the GitHub organization/repository, primary dom
   schemes now being organized for ingest — they are newly-verified.
   Marking schemes for other series/years remain subject to the same
   verification bar before ingestion.
+- **2026-10-01 — PDFs served by redirect to presigned R2 URLs,
+  superseding the 2026-09-13 "always proxy bytes" decision.** Proxying
+  put every PDF byte through a Vercel function (no Range support, no
+  resume on flaky connections, Vercel bandwidth and function time per
+  download). `/api/files` now does the live rights check and rate limit,
+  then 302-redirects to a presigned R2 URL valid for 10 minutes (section
+  5.1). Accepted trade-off: a link handed out just before a paper is
+  unpublished keeps working until it expires — at most ~10 minutes.
 
 ### 14.3 Documentation set
 

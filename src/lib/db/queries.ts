@@ -81,7 +81,10 @@ interface PublicArtifactRow extends ArtifactBaseRow {
   file_id: string | null;
   file_sha256: string | null;
   file_mime: string | null;
-  file_bytes: number | null;
+  // `bytes` is a bigint column, which the pg driver returns as a string
+  // (a bigint can be larger than a JavaScript number can hold exactly) --
+  // converted with Number() below; PDFs are nowhere near that size.
+  file_bytes: string | null;
   source_type: string | null;
   source_organization: string | null;
   source_attribution: string | null;
@@ -167,7 +170,7 @@ const PUBLIC_ARTIFACT_SELECT = `
     select id, sha256, mime, bytes
     from files
     where artifact_id = a.id
-    order by created_at desc
+    order by created_at desc, id desc
     limit 1
   ) f on true
   left join lateral (
@@ -217,7 +220,7 @@ function hydratePublicRecord(row: PublicArtifactRow): PublicExamRecord {
     // can't work that connection out on its own from the check alone.
     file:
       row.file_id !== null
-        ? { id: row.file_id, sha256: row.file_sha256!, mime: row.file_mime!, bytes: row.file_bytes! }
+        ? { id: row.file_id, sha256: row.file_sha256!, mime: row.file_mime!, bytes: Number(row.file_bytes) }
         : null,
     source:
       row.source_type !== null
@@ -300,6 +303,20 @@ const RIGHTS_CURRENTLY_APPROVED = `exists (
   ) latest
   where latest.rights_status in (${APPROVED_RIGHTS_STATUSES.map((s) => `'${s}'`).join(", ")})
     and (latest.expiry_date is null or latest.expiry_date >= current_date)
+)`;
+
+/**
+ * SQL, for a query joining `files f` to `artifacts a`: true only for the
+ * paper's current file -- its most recently added one, the same one
+ * PUBLIC_ARTIFACT_SELECT links to (ties broken by id, identically). Older
+ * versions of a replaced file are never served or zipped, e.g. a scan
+ * replaced because it showed a student's name.
+ */
+const IS_CURRENT_FILE = `f.id = (
+  select f2.id from files f2
+  where f2.artifact_id = a.id
+  order by f2.created_at desc, f2.id desc
+  limit 1
 )`;
 
 /** SQL: published, with rights currently approved -- the only papers whose files may be served. */
@@ -569,7 +586,7 @@ export const listPublishedFilesForInstance = cache(async (
      join exam_instances ei on ei.id = a.exam_instance_id
      join exam_series es on es.id = ei.exam_series_id
      join files f on f.artifact_id = a.id
-     where es.code = $1 and ei.year = $2 and ${SERVABLE}
+     where es.code = $1 and ei.year = $2 and ${SERVABLE} and ${IS_CURRENT_FILE}
      order by a.title`,
     [seriesCode, year]
   );
@@ -1024,27 +1041,29 @@ export interface DownloadableFile {
 
 /**
  * Only hands back a file if its exam paper is CURRENTLY published with
- * rights currently approved (see SERVABLE). We check this fresh against
- * the database every single time (nothing is cached here), so that if a
- * paper gets withdrawn, put on hold, or its rights lapse, its file stops
- * being downloadable immediately — not after some delay.
+ * rights currently approved (see SERVABLE), and it's the paper's current
+ * file (see IS_CURRENT_FILE). We check this fresh against the database
+ * every single time (nothing is cached here), so that if a paper gets
+ * withdrawn, put on hold, or its rights lapse, /api/files stops handing
+ * out links to it immediately. (A link handed out just before stays valid
+ * until it expires -- see PRESIGNED_LINK_SECONDS.)
  */
 export async function getFileForDownload(fileId: string): Promise<DownloadableFile | undefined> {
   const row = await queryOne<{
     storage_key: string;
     mime: string;
-    bytes: number;
+    bytes: string;
     title: string;
   }>(
     `select f.storage_key, f.mime, f.bytes, a.title
      from files f
      join artifacts a on a.id = f.artifact_id
-     where f.id = $1 and ${SERVABLE}`,
+     where f.id = $1 and ${SERVABLE} and ${IS_CURRENT_FILE}`,
     [fileId]
   );
 
   if (!row) return undefined;
-  return { storageKey: row.storage_key, mime: row.mime, bytes: row.bytes, title: row.title };
+  return { storageKey: row.storage_key, mime: row.mime, bytes: Number(row.bytes), title: row.title };
 }
 
 // --- Handling reports from the public — corrections, takedown requests, etc. ---

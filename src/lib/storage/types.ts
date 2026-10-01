@@ -85,6 +85,15 @@ export interface StorageProvider {
 
   /** Returns something that can be used to build a download/view link for this file. Not guaranteed to be a public web address for every storage system. */
   locate(key: string): string;
+
+  /**
+   * Optional: a temporary link that downloads the file straight from the
+   * storage system, valid for `expiresInSeconds`. Only storage systems that
+   * can serve files to browsers themselves have this (R2 does; local disk
+   * doesn't). When it exists, /api/files sends visitors there instead of
+   * passing the file's bytes through the app.
+   */
+  presignedGetUrl?(key: string, expiresInSeconds: number): Promise<string>;
 }
 
 /**

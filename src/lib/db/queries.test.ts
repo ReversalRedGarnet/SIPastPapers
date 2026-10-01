@@ -585,3 +585,31 @@ test("rights-expiring lists papers expiring within the window, and already-expir
     assert.equal(unapproved.find((u) => u.artifactId === paper.artifactId)?.rightsStatus, "rights_hold");
   });
 });
+
+test("only a paper's current file is served or zipped, never a replaced older version", async () => {
+  await withRolledBackTransaction(async () => {
+    const paper = await publishTestPaper("12");
+    const [oldFile] = await query<{ id: string }>("select id from files where artifact_id = $1", [paper.artifactId]);
+
+    // A replacement file added later (created_at is set explicitly: inside
+    // one test transaction now() never changes).
+    const newFileId = randomUUID();
+    await query(
+      `insert into files (id, artifact_id, storage_key, sha256, mime, bytes, created_at)
+       values ($1, $2, 'archive/test/replacement.pdf', repeat('a', 64), 'application/pdf', 10, now() + interval '1 second')`,
+      [newFileId, paper.artifactId]
+    );
+
+    assert.equal(await queries.getFileForDownload(oldFile.id), undefined, "the old version is no longer served");
+    const current = await queries.getFileForDownload(newFileId);
+    assert.ok(current, "the current version is served");
+    assert.equal(current.bytes, 10, "bigint byte counts come back as numbers, not strings");
+
+    const zip = await queries.listPublishedFilesForInstance("sisc-l1", 2099);
+    assert.deepEqual(
+      zip.filter((f) => f.fileId === oldFile.id || f.fileId === newFileId).map((f) => f.fileId),
+      [newFileId],
+      "the zip includes only the current version"
+    );
+  });
+});
