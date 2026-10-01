@@ -15,6 +15,10 @@ export const REPORT_STATUS_MESSAGES = {
     text: "That's a bit too long to send — please keep the details under 2,000 characters and your email under 200.",
     role: "alert",
   },
+  "too-many-reports": {
+    text: "Thank you — you've sent several reports in the last few minutes. Please wait a few minutes before sending another.",
+    role: "alert",
+  },
   "unknown-paper": {
     text: "We couldn't match your report to a paper. Please reload this page and try again.",
     role: "alert",

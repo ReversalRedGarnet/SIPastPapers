@@ -1,12 +1,14 @@
 import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { ZipArchive } from "archiver";
 import pLimit from "p-limit";
 import { listPublishedFilesForInstance, type DownloadableYearFile } from "@/lib/db/queries";
 import { getStorageProvider, type StorageProvider } from "@/lib/storage";
 import { generateDownloadFilename, sanitizeForFilename } from "@/lib/artifact-naming";
 import { seriesDisplayLabel } from "@/lib/format";
+import { identifyVisitor, rateLimit, VISITOR_COOKIE } from "@/lib/rate-limit";
+import { rateLimitedResponse, withVisitorCookie } from "@/lib/rate-limit-response";
 
 /**
  * The most files we'll read from storage at the same time. The zip
@@ -50,18 +52,25 @@ async function appendFile(storage: StorageProvider, archive: ZipArchive, file: D
  * produced.
  */
 export async function GET(
-  _request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ series: string; year: string }> }
 ) {
   const { series: seriesCode, year: yearParam } = await params;
+  const visitor = identifyVisitor(request.cookies.get(VISITOR_COOKIE)?.value, request.headers.get("x-forwarded-for"));
   const year = Number(yearParam);
   if (!Number.isInteger(year)) {
-    return new NextResponse("Not found", { status: 404 });
+    return withVisitorCookie(new NextResponse("Not found", { status: 404 }), visitor);
   }
+
+  // Building a zip is the most expensive thing this site does, so it has
+  // the smallest allowance (see src/lib/rate-limit.ts). Downloading the
+  // same year again (e.g. retrying a failed download) counts once.
+  const limit = rateLimit("zip", visitor, `${seriesCode}/${year}`);
+  if (!limit.allowed) return withVisitorCookie(rateLimitedResponse(request, limit), visitor);
 
   const files = await listPublishedFilesForInstance(seriesCode, year);
   if (files.length === 0) {
-    return new NextResponse("Not found", { status: 404 });
+    return withVisitorCookie(new NextResponse("Not found", { status: 404 }), visitor);
   }
 
   const storage = getStorageProvider();
@@ -146,12 +155,17 @@ export async function GET(
 
   const zipFilename = `${sanitizeForFilename(seriesDisplayLabel(seriesCode))} ${year}.zip`;
 
-  return new NextResponse(Readable.toWeb(archive) as ReadableStream<Uint8Array>, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="${zipFilename}"`,
-      "Cache-Control": "no-store",
-    },
-  });
+  // The zip is starting to be sent, so now it counts.
+  limit.record();
+  return withVisitorCookie(
+    new NextResponse(Readable.toWeb(archive) as ReadableStream<Uint8Array>, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${zipFilename}"`,
+        "Cache-Control": "no-store",
+      },
+    }),
+    visitor
+  );
 }

@@ -6,8 +6,11 @@
 // write or fetch() call to make by hand; Next.js wires the two together.
 "use server";
 
+import { randomUUID } from "node:crypto";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createIssue, getPublicArtifactPath } from "@/lib/db/queries";
+import { identifyVisitor, rateLimit, VISITOR_COOKIE, VISITOR_COOKIE_OPTIONS } from "@/lib/rate-limit";
 import { parseReportForm, safeReturnTo } from "@/lib/report-form";
 import { reportStatusHref } from "@/lib/report-status";
 
@@ -41,6 +44,17 @@ export async function reportIssueAction(formData: FormData): Promise<void> {
   if (parsed.kind === "spam") redirect(reportStatusHref(fallbackReturnTo, "sent"));
   if (parsed.kind === "invalid") redirect(reportStatusHref(fallbackReturnTo, parsed.code));
 
+  // A few reports per visitor every few minutes (see src/lib/rate-limit.ts),
+  // so the form can't be used to flood the issues table. Every report is a
+  // separate item -- unlike files, sending "the same" report again counts.
+  // `cookies()` and `headers()` read the incoming request; they're async
+  // in this version of Next.js, hence the `await`.
+  const cookieStore = await cookies();
+  const visitor = identifyVisitor(cookieStore.get(VISITOR_COOKIE)?.value, (await headers()).get("x-forwarded-for"));
+  if (visitor.newCookie) cookieStore.set(VISITOR_COOKIE, visitor.newCookie, VISITOR_COOKIE_OPTIONS);
+  const limit = rateLimit("report", visitor, randomUUID());
+  if (!limit.allowed) redirect(reportStatusHref(fallbackReturnTo, "too-many-reports"));
+
   const paperPath = await getPublicArtifactPath(parsed.artifactId);
   if (!paperPath) redirect(reportStatusHref(fallbackReturnTo, "unknown-paper"));
 
@@ -50,6 +64,7 @@ export async function reportIssueAction(formData: FormData): Promise<void> {
     description: parsed.description,
     contact: parsed.contact,
   });
+  limit.record();
 
   redirect(reportStatusHref(paperPath, "sent"));
 }
