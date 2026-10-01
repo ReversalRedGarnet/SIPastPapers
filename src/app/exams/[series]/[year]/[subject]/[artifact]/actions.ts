@@ -8,6 +8,7 @@
 
 import { redirect } from "next/navigation";
 import { createIssue } from "@/lib/db/queries";
+import { reportStatusHref } from "@/lib/report-status";
 
 const VALID_ISSUE_TYPES = [
   "wrong_metadata",
@@ -51,11 +52,11 @@ export async function reportIssueAction(formData: FormData): Promise<void> {
   const contact = String(formData.get("contact") ?? "").trim() || null;
 
   if (!artifactId || !description) {
-    // `encodeURIComponent` makes arbitrary text safe to place inside a URL,
-    // escaping characters (spaces, punctuation, etc.) that would otherwise
-    // break the address. `redirect(...)` is a Next.js function that sends
-    // the visitor's browser to a different address.
-    redirect(`${returnTo}?reportError=${encodeURIComponent("Please describe the problem before submitting.")}`);
+    // `redirect(...)` is a Next.js function that sends the visitor's
+    // browser to a different address -- here, back to the paper's page
+    // with a fixed status code the page turns into a message (see
+    // src/lib/report-status.ts).
+    redirect(reportStatusHref(returnTo, "missing-details"));
   }
 
   await createIssue({
@@ -65,5 +66,5 @@ export async function reportIssueAction(formData: FormData): Promise<void> {
     contact,
   });
 
-  redirect(`${returnTo}?reported=1`);
+  redirect(reportStatusHref(returnTo, "sent"));
 }

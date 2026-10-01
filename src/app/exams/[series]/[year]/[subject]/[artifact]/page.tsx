@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { getPublicArtifactBySlug, listSubjectArtifacts } from "@/lib/db/queries";
 import { artifactListLabel } from "@/lib/artifact-naming";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
 import { CONTACT_EMAIL, SITE_NAME, SITE_URL } from "@/lib/site";
 import { PdfPreview } from "@/components/PdfPreview";
+import { ReportStatus } from "@/components/ReportStatus";
 import { reportIssueAction } from "./actions";
 
 interface DocumentPageProps {
@@ -15,7 +17,6 @@ interface DocumentPageProps {
     subject: string;
     artifact: string;
   }>;
-  searchParams: Promise<{ reported?: string; reportError?: string }>;
 }
 
 function loadRecord(params: {
@@ -50,7 +51,21 @@ export async function generateMetadata({
 // something via the command-line tool — occasional, not continuous — so
 // the same 5-minute cache tier as the subject-listing page (one level up
 // in the browse hierarchy) works fine here too.
+//
+// This only takes effect because nothing on this page reads the address's
+// query string on the server (the report form's "?report=" message is read
+// in the browser instead -- see ReportStatus). Reading `searchParams` here
+// would make Next.js render the page fresh for every single visit.
 export const revalidate = 300;
+
+// Returning an empty list means "don't build any of these pages ahead of
+// time" -- each paper's page is built the first time someone visits it,
+// then cached and reused (refreshed every `revalidate` seconds above).
+// Next.js needs this function to exist, even empty, to cache pages for
+// addresses it only finds out about while running.
+export async function generateStaticParams() {
+  return [];
+}
 
 const ISSUE_TYPES = [
   { value: "wrong_metadata", label: "Wrong year, subject, or paper number" },
@@ -60,11 +75,10 @@ const ISSUE_TYPES = [
   { value: "other", label: "Something else" },
 ];
 
-export default async function DocumentPage({ params, searchParams }: DocumentPageProps) {
+export default async function DocumentPage({ params }: DocumentPageProps) {
   const found = await loadRecord(await params);
   if (!found) notFound();
   const { record, related } = found;
-  const { reported, reportError } = await searchParams;
 
   const currentPath = `/exams/${record.examSeriesCode}/${record.year}/${record.subjectSlug}/${record.slug}`;
   const typeLabel = artifactListLabel(record.artifactType, record.paperNumber);
@@ -305,19 +319,14 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
           <Link href="/about#corrections">correction and takedown process</Link>.
         </p>
 
-        {reported && (
-          <div className="confirmation" role="status">
-            <p>Thanks — this has been logged and will be reviewed.</p>
-          </div>
-        )}
-        {/* `decodeURIComponent` reverses `encodeURIComponent` (see
-            ./actions.ts), turning the escaped text back from the URL's
-            query string into ordinary readable text. */}
-        {reportError && (
-          <div className="confirmation" role="alert">
-            <p>{decodeURIComponent(reportError)}</p>
-          </div>
-        )}
+        {/* <Suspense> marks the one part of this page that can only be
+            filled in once the browser has the full address (ReportStatus
+            reads its "?report=" code). Everything else on the page is
+            built and cached ahead of time; this part shows nothing
+            (`fallback={null}`) until then. */}
+        <Suspense fallback={null}>
+          <ReportStatus />
+        </Suspense>
 
         <form aria-label="Report a problem with this record">
           <input type="hidden" name="artifactId" value={record.id} />
