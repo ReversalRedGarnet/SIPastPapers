@@ -209,9 +209,7 @@ export class R2Storage implements StorageProvider {
       new CopyObjectCommand({
         Bucket: this.bucket,
         Key: key,
-        // "<bucket>/<key>", with each part of the key URL-encoded, as the
-        // copy-source format requires.
-        CopySource: `${this.bucket}/${key.split("/").map(encodeURIComponent).join("/")}`,
+        CopySource: this.copySource(key),
         CopySourceIfMatch: head.ETag,
         MetadataDirective: "REPLACE",
         ContentType: headers.contentType,
@@ -233,6 +231,32 @@ export class R2Storage implements StorageProvider {
    * it expires, so only hand these out for files that are allowed to be
    * public.
    */
+  /**
+   * Moves a file to a new key (R2 has no "rename", so: copy, then delete
+   * the original). The copy keeps all the file's stored headers, and only
+   * happens if the file is still exactly the one just looked at (ETag);
+   * the original is deleted only once the copy has succeeded. Refuses if
+   * something is already stored at `toKey`.
+   */
+  async move(fromKey: string, toKey: string): Promise<void> {
+    if (await this.exists(toKey)) throw new StorageKeyExistsError(toKey);
+    const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: fromKey }));
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.bucket,
+        Key: toKey,
+        CopySource: this.copySource(fromKey),
+        CopySourceIfMatch: head.ETag,
+      })
+    );
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: fromKey }));
+  }
+
+  /** "<bucket>/<key>", with each part of the key URL-encoded, as CopyObject's copy-source format requires. */
+  private copySource(key: string): string {
+    return `${this.bucket}/${key.split("/").map(encodeURIComponent).join("/")}`;
+  }
+
   async presignedGetUrl(key: string, expiresInSeconds: number): Promise<string> {
     if (!this.realClient) {
       throw new Error("presignedGetUrl needs a real R2 connection (it isn't available with a test client).");

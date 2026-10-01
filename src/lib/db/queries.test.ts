@@ -613,3 +613,33 @@ test("only a paper's current file is served or zipped, never a replaced older ve
     );
   });
 });
+
+test("unpublish moves the paper's file to quarantine (instant revoke), keeps the bytes, and logs it", async () => {
+  await withRolledBackTransaction(async () => {
+    const paper = await publishTestPaper("13");
+    const [before] = await query<{ id: string; storage_key: string }>(
+      "select id, storage_key from files where artifact_id = $1",
+      [paper.artifactId]
+    );
+
+    const result = await queries.unpublishArtifact(paper.artifactId, "withdrawn", "test");
+    assert.equal(result.filesMoved, 1);
+    assert.deepEqual(result.moveErrors, []);
+
+    const [after] = await query<{ storage_key: string }>("select storage_key from files where id = $1", [before.id]);
+    assert.match(after.storage_key, /^quarantine\/\d{8}T\d{6}\//);
+    assert.ok(after.storage_key.endsWith(before.storage_key));
+    assert.equal(await getStorageProvider().exists(before.storage_key), false, "the old key no longer resolves");
+    assert.match((await getStorageProvider().get(after.storage_key))!.toString(), /rights-invariant-13/);
+
+    const [event] = await query<{ metadata: { from: string; to: string } }>(
+      "select metadata from audit_events where object_id = $1 and event_type = 'file_quarantined'",
+      [paper.artifactId]
+    );
+    assert.deepEqual(event.metadata, { fileId: before.id, from: before.storage_key, to: after.storage_key });
+
+    // Published again later, it's simply served from its quarantine key.
+    await queries.publishArtifact(paper.artifactId);
+    assert.equal((await queries.getFileForDownload(before.id))?.storageKey, after.storage_key);
+  });
+});

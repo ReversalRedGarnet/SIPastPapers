@@ -25,7 +25,8 @@ export const PDF_CACHE_CONTROL = "private, max-age=600";
  * How long a presigned link to a paper (handed out by /api/files) stays
  * valid. This is also the longest a paper can stay downloadable after
  * being unpublished, for someone who requested it just before -- the
- * agreed "up to ~10 minutes".
+ * agreed "up to ~10 minutes". (`unpublish` also moves the file to a
+ * quarantine key, which cuts even those links off at once.)
  */
 export const PRESIGNED_LINK_SECONDS = 600;
 

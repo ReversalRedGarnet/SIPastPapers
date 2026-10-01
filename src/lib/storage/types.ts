@@ -94,6 +94,14 @@ export interface StorageProvider {
    * passing the file's bytes through the app.
    */
   presignedGetUrl?(key: string, expiresInSeconds: number): Promise<string>;
+
+  /**
+   * Optional: moves the file at `fromKey` to `toKey`, bytes unchanged.
+   * Never overwrites: throws StorageKeyExistsError if `toKey` is taken.
+   * Used by unpublish to put a withdrawn paper's file out of reach (see
+   * quarantineArtifactFiles in src/lib/db/queries.ts).
+   */
+  move?(fromKey: string, toKey: string): Promise<void>;
 }
 
 /**

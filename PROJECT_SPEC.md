@@ -152,7 +152,11 @@ storage (development) the route streams the file itself.
 This replaced the original "always proxy bytes through the app" design
 (see the decision log, 2026-10-01). The trade-off, accepted explicitly:
 a presigned URL handed out just before a paper is unpublished stays
-valid until it expires — at most 10 minutes.
+valid until it expires — at most 10 minutes. For an instant takedown,
+`unpublish` also moves the paper's stored file(s) to
+`quarantine/<UTC timestamp>/<original key>` (bytes kept, logged as
+`file_quarantined` in `audit_events`), which invalidates such links
+immediately; a paper published again is served from its quarantine key.
 
 ### 5.2 Storage layout
 
@@ -421,6 +425,8 @@ unpublish <artifact-id> [--status withdrawn|rights_hold] [--reason <text>]
 
     Flips a published artifact back to a non-public status and logs the
     action. New command — publishing was previously one-directional.
+    Also moves the artifact's stored file(s) to a quarantine key (section
+    5.1), so download links already handed out stop working at once.
 
 list
 

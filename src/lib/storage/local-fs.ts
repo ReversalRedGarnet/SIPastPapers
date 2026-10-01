@@ -100,6 +100,13 @@ export class LocalFilesystemStorage implements StorageProvider {
     await fs.rm(this.resolve(key), { force: true });
   }
 
+  async move(fromKey: string, toKey: string): Promise<void> {
+    if (await this.exists(toKey)) throw new StorageKeyExistsError(toKey);
+    const dest = this.resolve(toKey);
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.rename(this.resolve(fromKey), dest);
+  }
+
   locate(key: string): string {
     // This path isn't reachable from a web browser — there's no public web
     // address that serves files straight out of the local-storage folder.

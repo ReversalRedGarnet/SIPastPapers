@@ -461,6 +461,19 @@ async function runUnpublish(args: ParsedArgs): Promise<void> {
 
   const result = await unpublishArtifact(artifactId, status as "withdrawn" | "rights_hold", args.flags.reason ?? null);
   console.log(`Unpublished "${result.title}" (${artifactId}) -> ${status}.`);
+  if (result.filesMoved > 0) {
+    console.log(
+      `Moved ${result.filesMoved} stored file(s) to quarantine -- download links already handed out stop working now.`
+    );
+  }
+  if (result.moveErrors.length > 0) {
+    console.error(
+      `WARNING: couldn't move ${result.moveErrors.length} stored file(s). The paper is unpublished and the site no` +
+        `\nlonger hands it out, but a link handed out in the last 10 minutes can keep working until it expires:`
+    );
+    result.moveErrors.forEach((e) => console.error(`  ${e}`));
+    process.exitCode = 1;
+  }
 }
 
 // --- list -------------------------------------------------------------------
@@ -847,7 +860,10 @@ Commands:
       single <artifact-id>.
 
   unpublish <artifact-id> [--status withdrawn|rights_hold] [--reason <text>]
-      Take a published artifact back off the public site.
+      Take a published artifact back off the public site. Also moves its
+      stored file(s) to quarantine/<timestamp>/<original key> (bytes kept,
+      logged), so any download link already handed out stops working
+      immediately rather than when it expires (up to 10 minutes).
 
   list
       List every artifact with its id, status and rights status.

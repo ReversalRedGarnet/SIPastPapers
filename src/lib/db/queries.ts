@@ -1412,7 +1412,7 @@ export async function unpublishArtifact(
   artifactId: string,
   toStatus: Extract<ArtifactStatus, "withdrawn" | "rights_hold"> = "withdrawn",
   reason?: string | null
-): Promise<{ title: string }> {
+): Promise<{ title: string } & QuarantineResult> {
   const artifact = await queryOne<{ id: string; title: string; status: ArtifactStatus }>(
     "select id, title, status from artifacts where id = $1",
     [artifactId]
@@ -1422,7 +1422,7 @@ export async function unpublishArtifact(
     throw new Error(`Artifact ${artifactId} is not published (status: ${artifact.status}).`);
   }
 
-  return withTransaction(async () => {
+  await withTransaction(async () => {
     await query("update artifacts set status = $1 where id = $2", [toStatus, artifactId]);
 
     await query(
@@ -1430,7 +1430,69 @@ export async function unpublishArtifact(
        values ($1, null, 'artifact_unpublished', 'artifact', $2, $3)`,
       [randomUUID(), artifactId, JSON.stringify({ toStatus, reason: reason ?? null })]
     );
-
-    return { title: artifact.title };
   });
+
+  // From here on the site already refuses to hand the paper out. Moving
+  // its stored file(s) also cuts off any download link handed out in the
+  // last few minutes, which would otherwise keep working until it expired.
+  return { title: artifact.title, ...(await quarantineArtifactFiles(artifactId)) };
+}
+
+export interface QuarantineResult {
+  /** How many stored files were moved to a quarantine key. */
+  filesMoved: number;
+  /** One message per file that couldn't be moved (the paper is unpublished regardless). */
+  moveErrors: string[];
+}
+
+/**
+ * The key a file is moved to when its paper is unpublished:
+ * "quarantine/<UTC timestamp>/<original key>". The timestamp makes every
+ * unpublish use a fresh key -- so unpublishing a paper that was published
+ * again from quarantine still cuts off links to its current key.
+ */
+export function quarantineKeyFor(storageKey: string, now: Date = new Date()): string {
+  const originalKey = storageKey.replace(/^quarantine\/[^/]+\//, "");
+  // e.g. "2026-10-01T11:53:59.123Z" -> "20261001T115359"
+  const stamp = now.toISOString().replace(/[-:]/g, "").slice(0, 15);
+  return `quarantine/${stamp}/${originalKey}`;
+}
+
+/**
+ * Moves every stored file of an (already unpublished) paper to a
+ * quarantine key, and points its file records there. Download links are
+ * tied to a file's key, so this makes every link already handed out stop
+ * working immediately -- the "instant revoke". Nothing is deleted: the
+ * bytes are kept, each move is logged in audit_events, and if the paper is
+ * published again it's simply served from its quarantine key.
+ */
+async function quarantineArtifactFiles(artifactId: string): Promise<QuarantineResult> {
+  const storage = getStorageProvider();
+  if (!storage.move) return { filesMoved: 0, moveErrors: [] };
+
+  const files = await query<{ id: string; storage_key: string }>(
+    "select id, storage_key from files where artifact_id = $1",
+    [artifactId]
+  );
+  let filesMoved = 0;
+  const moveErrors: string[] = [];
+  for (const file of files) {
+    const toKey = quarantineKeyFor(file.storage_key);
+    try {
+      await storage.move(file.storage_key, toKey);
+    } catch (err) {
+      moveErrors.push(`${file.storage_key}: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    await withTransaction(async () => {
+      await query("update files set storage_key = $1 where id = $2", [toKey, file.id]);
+      await query(
+        `insert into audit_events (id, actor_id, event_type, object_type, object_id, metadata)
+         values ($1, null, 'file_quarantined', 'artifact', $2, $3)`,
+        [randomUUID(), artifactId, JSON.stringify({ fileId: file.id, from: file.storage_key, to: toKey })]
+      );
+    });
+    filesMoved++;
+  }
+  return { filesMoved, moveErrors };
 }
