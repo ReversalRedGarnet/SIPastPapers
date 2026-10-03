@@ -34,7 +34,7 @@ export default async function BrowsePage() {
         <ul className="list-rows">
           {examSeries.map((s) => (
             <li key={s.code}>
-              <Link href={`/browse/${s.code}`} className="list-row">
+              <Link prefetch={false} href={`/browse/${s.code}`} className="list-row">
                 <span className="list-row__label">{seriesDisplayLabel(s.code)}</span>
                 {seriesIsEmpty(s.code, availability) && <Badge tone="neutral">No papers yet</Badge>}
                 <span className="list-row__chevron" aria-hidden="true">

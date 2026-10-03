@@ -88,9 +88,9 @@ export default async function SubjectPage({ params }: SubjectPageProps) {
 
       <div className="browse-content">
         <nav aria-label="Breadcrumb" className="breadcrumb">
-          <Link href="/browse">Browse</Link> ›{" "}
-          <Link href={`/browse/${seriesCode}`}>{seriesDisplayLabel(series.code)}</Link> ›{" "}
-          <Link href={`/browse/${seriesCode}/${year}`}>{year}</Link> › {subject.canonicalName}
+          <Link prefetch={false} href="/browse">Browse</Link> ›{" "}
+          <Link prefetch={false} href={`/browse/${seriesCode}`}>{seriesDisplayLabel(series.code)}</Link> ›{" "}
+          <Link prefetch={false} href={`/browse/${seriesCode}/${year}`}>{year}</Link> › {subject.canonicalName}
         </nav>
 
         <h1>{subject.canonicalName}</h1>

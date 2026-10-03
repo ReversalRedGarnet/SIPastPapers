@@ -185,7 +185,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
       {total === 0 ? (
         <p className="empty-state">
           No published papers match those filters yet. Try clearing a filter
-          or <Link href="/browse">browse what&apos;s available</Link>.
+          or <Link prefetch={false} href="/browse">browse what&apos;s available</Link>.
         </p>
       ) : records.length === 0 ? (
         // There ARE matching results overall, but this specific page has

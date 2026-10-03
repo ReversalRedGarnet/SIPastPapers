@@ -162,7 +162,7 @@ export default async function HomePage() {
           <ul className="list-rows">
             {examSeries.map((s) => (
               <li key={s.code}>
-                <Link href={`/browse/${s.code}`} className="list-row">
+                <Link prefetch={false} href={`/browse/${s.code}`} className="list-row">
                   <span className="list-row__label">{seriesDisplayLabel(s.code)}</span>
                   <span className="list-row__chevron" aria-hidden="true">
                     ›

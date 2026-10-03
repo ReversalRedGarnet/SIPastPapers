@@ -176,10 +176,10 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
           formatting -- forces a real space to appear there, so text doesn't
           run together at the line break below. */}
       <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href="/browse">Browse</Link> ›{" "}
-        <Link href={`/browse/${record.examSeriesCode}`}>{seriesLabel}</Link> ›{" "}
-        <Link href={`/browse/${record.examSeriesCode}/${record.year}`}>{record.year}</Link> ›{" "}
-        <Link href={`/browse/${record.examSeriesCode}/${record.year}/${record.subjectSlug}`}>
+        <Link prefetch={false} href="/browse">Browse</Link> ›{" "}
+        <Link prefetch={false} href={`/browse/${record.examSeriesCode}`}>{seriesLabel}</Link> ›{" "}
+        <Link prefetch={false} href={`/browse/${record.examSeriesCode}/${record.year}`}>{record.year}</Link> ›{" "}
+        <Link prefetch={false} href={`/browse/${record.examSeriesCode}/${record.year}/${record.subjectSlug}`}>
           {record.subject}
         </Link>{" "}
         › {typeLabel}
@@ -258,7 +258,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
       {(prevPaper || nextPaper) && (
         <nav aria-label="Adjacent papers in this subject" className="paper-pager">
           {prevPaper ? (
-            <Link href={paperHref(prevPaper)} className="paper-pager__link paper-pager__link--prev">
+            <Link prefetch={false} href={paperHref(prevPaper)} className="paper-pager__link paper-pager__link--prev">
               <span className="paper-pager__direction">‹ Previous</span>
               <span className="paper-pager__label">
                 {prevPaper.subject} {prevPaper.year} — {artifactListLabel(prevPaper.artifactType, prevPaper.paperNumber)}
@@ -268,7 +268,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
             <span />
           )}
           {nextPaper ? (
-            <Link href={paperHref(nextPaper)} className="paper-pager__link paper-pager__link--next">
+            <Link prefetch={false} href={paperHref(nextPaper)} className="paper-pager__link paper-pager__link--next">
               <span className="paper-pager__direction">Next ›</span>
               <span className="paper-pager__label">
                 {nextPaper.subject} {nextPaper.year} — {artifactListLabel(nextPaper.artifactType, nextPaper.paperNumber)}
@@ -286,7 +286,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
           <ul className="list-rows">
             {otherYears.map((y) => (
               <li key={y}>
-                <Link href={`/browse/${record.examSeriesCode}/${y}/${record.subjectSlug}`} className="list-row">
+                <Link prefetch={false} href={`/browse/${record.examSeriesCode}/${y}/${record.subjectSlug}`} className="list-row">
                   <span className="list-row__label">
                     {record.subject} {y}
                   </span>
@@ -307,6 +307,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
             {related.map((r) => (
               <li key={r.id}>
                 <Link
+                  prefetch={false}
                   href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}
                   className="list-row"
                 >

@@ -93,8 +93,8 @@ export default async function YearPage({ params }: YearPageProps) {
 
       <div className="browse-content">
         <nav aria-label="Breadcrumb" className="breadcrumb">
-          <Link href="/browse">Browse</Link> ›{" "}
-          <Link href={`/browse/${seriesCode}`}>{seriesDisplayLabel(series.code)}</Link> › {year}
+          <Link prefetch={false} href="/browse">Browse</Link> ›{" "}
+          <Link prefetch={false} href={`/browse/${seriesCode}`}>{seriesDisplayLabel(series.code)}</Link> › {year}
         </nav>
 
         <h1>{year}</h1>

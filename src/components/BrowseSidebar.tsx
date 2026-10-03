@@ -33,6 +33,7 @@ export function BrowseSidebar({
           return (
             <li key={s.code}>
               <Link
+                prefetch={false}
                 href={`/browse/${s.code}`}
                 className={isActive ? "active" : undefined}
                 aria-current={isActive ? "page" : undefined}

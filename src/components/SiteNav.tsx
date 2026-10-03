@@ -40,7 +40,14 @@ export function SiteNav() {
           const isActive = item.exact ? pathname === item.href : pathname.startsWith(item.href);
           return (
             <li key={item.href}>
-              <Link href={item.href} className={isActive ? "active" : undefined} aria-current={isActive ? "page" : undefined}>
+              {/* Browse pages go through src/proxy.ts, so they aren't prefetched;
+                  the other pages are static and prefetch for free. */}
+              <Link
+                href={item.href}
+                prefetch={item.href === "/browse" ? false : undefined}
+                className={isActive ? "active" : undefined}
+                aria-current={isActive ? "page" : undefined}
+              >
                 {item.label}
               </Link>
             </li>

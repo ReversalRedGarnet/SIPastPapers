@@ -37,7 +37,7 @@ export default function NotFound() {
 
       <p className="hint" style={{ marginTop: "1.5rem" }}>
         Or <Link href="/">return to the homepage</Link> or{" "}
-        <Link href="/browse">browse the archive</Link>.
+        <Link prefetch={false} href="/browse">browse the archive</Link>.
       </p>
     </>
   );

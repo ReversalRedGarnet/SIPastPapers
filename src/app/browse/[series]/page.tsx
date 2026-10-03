@@ -92,7 +92,7 @@ export default async function SeriesPage({ params }: SeriesPageProps) {
 
       <div className="browse-content">
         <nav aria-label="Breadcrumb" className="breadcrumb">
-          <Link href="/browse">Browse</Link> › {seriesDisplayLabel(series.code)}
+          <Link prefetch={false} href="/browse">Browse</Link> › {seriesDisplayLabel(series.code)}
         </nav>
 
         <h1>{seriesDisplayLabel(series.code)}</h1>
