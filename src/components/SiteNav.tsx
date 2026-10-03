@@ -16,10 +16,14 @@ import Link from "next/link";
 // needs the "use client" line above.
 import { usePathname } from "next/navigation";
 
-const ITEMS = [
+// `prefetch: false`: browse pages go through src/proxy.ts, and /results is
+// rendered fresh on every request -- prefetching either would cost a
+// function run on every page load (src/lib/link-prefetch.test.ts checks
+// this). The other pages are static and prefetch for free.
+export const ITEMS: { href: string; label: string; exact: boolean; prefetch?: false }[] = [
   { href: "/", label: "Home", exact: true },
-  { href: "/browse", label: "Browse", exact: false },
-  { href: "/results", label: "Search", exact: false },
+  { href: "/browse", label: "Browse", exact: false, prefetch: false },
+  { href: "/results", label: "Search", exact: false, prefetch: false },
   { href: "/missing", label: "Missing papers", exact: false },
   { href: "/about", label: "About", exact: false },
 ];
@@ -40,11 +44,9 @@ export function SiteNav() {
           const isActive = item.exact ? pathname === item.href : pathname.startsWith(item.href);
           return (
             <li key={item.href}>
-              {/* Browse pages go through src/proxy.ts, so they aren't prefetched;
-                  the other pages are static and prefetch for free. */}
               <Link
                 href={item.href}
-                prefetch={item.href === "/browse" ? false : undefined}
+                prefetch={item.prefetch}
                 className={isActive ? "active" : undefined}
                 aria-current={isActive ? "page" : undefined}
               >
