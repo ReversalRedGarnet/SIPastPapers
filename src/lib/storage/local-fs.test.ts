@@ -68,3 +68,19 @@ test(
     assert.equal((await storage.get("quarantine/20261001T000000/archive/a.pdf"))!.toString(), "%PDF-1.4\n%a\n");
   })
 );
+
+test(
+  "LocalFilesystemStorage.list returns every key under a prefix, and nothing for a missing folder",
+  withTempStorage(async (storage) => {
+    for (const key of ["zips/sisc-l1/2019/a.zip", "zips/sisc-l1/2019/b.zip", "zips/sisc-l1/2020/c.zip", "archive/x.pdf"]) {
+      await storage.put(key, Buffer.from("x"));
+    }
+    assert.deepEqual((await storage.list("zips/sisc-l1/2019/")).sort(), ["zips/sisc-l1/2019/a.zip", "zips/sisc-l1/2019/b.zip"]);
+    assert.deepEqual((await storage.list("zips/")).sort(), [
+      "zips/sisc-l1/2019/a.zip",
+      "zips/sisc-l1/2019/b.zip",
+      "zips/sisc-l1/2020/c.zip",
+    ]);
+    assert.deepEqual(await storage.list("zips/nothing/"), []);
+  })
+);

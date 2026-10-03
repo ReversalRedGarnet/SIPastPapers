@@ -248,3 +248,16 @@ test("a file quarantined and then restored (copy + delete, both ways) keeps its 
   assert.equal(after?.etag, before?.etag, "same bytes");
   assert.equal(await storage.exists(quarantined), false);
 });
+
+test("R2Storage.list returns every key under a prefix, across pages", async () => {
+  const storage = storageWith(createFakeS3Client());
+  for (const key of ["zips/sisc-l1/2019/a.zip", "zips/sisc-l1/2019/b.zip", "zips/sisc-l1/2019/c.zip", "zips/sisc-l1/2020/d.zip", "archive/x.pdf"]) {
+    await storage.put(key, Buffer.from("x"));
+  }
+  assert.deepEqual((await storage.list("zips/sisc-l1/2019/")).sort(), [
+    "zips/sisc-l1/2019/a.zip",
+    "zips/sisc-l1/2019/b.zip",
+    "zips/sisc-l1/2019/c.zip",
+  ]);
+  assert.deepEqual(await storage.list("zips/nothing/"), []);
+});

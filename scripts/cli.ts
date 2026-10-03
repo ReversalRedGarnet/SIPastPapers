@@ -18,12 +18,14 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import {
   approveRights,
+  getArtifactInstance,
   getArtifactStatus,
   getCoverageMatrix,
   ingestArtifact,
   listAllArtifacts,
   listPublishedRightsExpiring,
   listPublishedWithUnapprovedRights,
+  listServableYearInstances,
   listStoredFiles,
   prepareArtifactPurge,
   publishArtifact,
@@ -34,7 +36,9 @@ import {
   type QuarantineResult,
   type StoredFile,
 } from "@/lib/db/queries";
-import { formatBytes } from "@/lib/format";
+import { formatBytes, seriesDisplayLabel } from "@/lib/format";
+import { YEAR_ZIP_ROOT } from "@/lib/year-zip";
+import { getYearZipStatus, syncYearZip } from "@/lib/year-zip-build";
 import { artifactTypeSlug, generateDownloadFilename } from "@/lib/artifact-naming";
 import { pdfServingHeaders, type ServingHeaders } from "@/lib/storage/serving-headers";
 import { getStorageProvider } from "@/lib/storage";
@@ -419,6 +423,112 @@ async function runBulkPublish(series: string, yearRangeRaw: string, flags: Recor
   const summary = await executeBulkPublish(plan.toPublish);
   console.log(`\nBulk publish complete: ${summary.published} published, ${summary.failed} failed.`);
   if (summary.failed > 0) process.exitCode = 1;
+  const years = [...new Set(plan.toPublish.map((a) => a.year))].sort();
+  await printYearZipNotices(years.map((year) => ({ seriesCode: series, year })));
+}
+
+// --- year zips ----------------------------------------------------------------
+
+function buildZipsCommand(seriesCode: string, year: number): string {
+  return `npm run cli -- build-zips --series ${seriesCode} --year ${year} --confirm`;
+}
+
+/**
+ * After publishing or unpublishing: a year whose papers changed needs its
+ * "Download all" zip rebuilt -- until then visitors are told it isn't ready
+ * yet. Says so for each year that needs it.
+ */
+async function printYearZipNotices(instances: { seriesCode: string; year: number }[]): Promise<void> {
+  const storage = getStorageProvider();
+  for (const { seriesCode, year } of instances) {
+    const status = await getYearZipStatus(storage, seriesCode, year);
+    if (status.key && !status.built) {
+      console.log(
+        `\nThe "Download all" zip for ${seriesDisplayLabel(seriesCode)} ${year} needs rebuilding` +
+          ` (until then visitors are told it isn't ready yet):\n  ${buildZipsCommand(seriesCode, year)}`
+      );
+    }
+  }
+}
+
+const BUILD_ZIPS_USAGE = "Usage: build-zips (--series <code> --year <yyyy> | --all) [--confirm]";
+
+/**
+ * build-zips: builds each year's "Download all" zip from the papers that
+ * are servable right now and stores it (R2 in production), then deletes
+ * that year's out-of-date zips. Dry run unless --confirm. A year whose zip
+ * is already up to date is left alone, so `--all` is safe to re-run.
+ */
+async function runBuildZips(args: ParsedArgs): Promise<void> {
+  const { flags } = args;
+  const confirm = flags.confirm === "true";
+  let instances: { seriesCode: string; year: number }[];
+  const storage = getStorageProvider();
+  if (flags.all) {
+    if (flags.series || flags.year) fail(`--all can't be combined with --series/--year.\n${BUILD_ZIPS_USAGE}`);
+    // Every year with servable papers, plus any year that only has old
+    // zips left (e.g. every paper withdrawn) so those get deleted.
+    const found = new Map<string, { seriesCode: string; year: number }>();
+    for (const i of await listServableYearInstances()) found.set(`${i.seriesCode}/${i.year}`, i);
+    for (const key of await storage.list(YEAR_ZIP_ROOT)) {
+      const [, seriesCode, yearText] = key.split("/");
+      if (seriesCode && /^\d{4}$/.test(yearText)) found.set(`${seriesCode}/${yearText}`, { seriesCode, year: Number(yearText) });
+    }
+    instances = [...found.values()].sort((a, b) => a.seriesCode.localeCompare(b.seriesCode) || a.year - b.year);
+  } else {
+    if (!flags.series || !/^\d{4}$/.test(flags.year ?? "")) fail(BUILD_ZIPS_USAGE);
+    instances = [{ seriesCode: flags.series, year: Number(flags.year) }];
+  }
+
+  let toBuild = 0;
+  let upToDate = 0;
+  let built = 0;
+  let deleted = 0;
+  let failed = 0;
+  let builtBytes = 0;
+  for (const { seriesCode, year } of instances) {
+    const label = `${seriesDisplayLabel(seriesCode)} ${year}`.padEnd(28);
+    const status = await getYearZipStatus(storage, seriesCode, year);
+    const stale = status.staleKeys.length > 0 ? `, ${status.staleKeys.length} old zip(s) to delete` : "";
+    if (!status.key) {
+      console.log(`NO PAPERS    ${label} (no servable papers${stale})`);
+    } else if (status.built) {
+      upToDate++;
+      console.log(`UP TO DATE   ${label} (${status.files.length} papers${stale})`);
+    } else {
+      toBuild++;
+      console.log(`NEEDS BUILD  ${label} (${status.files.length} papers${stale})`);
+    }
+    if (!confirm || (status.built && status.staleKeys.length === 0) || (!status.key && status.staleKeys.length === 0)) {
+      continue;
+    }
+    try {
+      const result = await syncYearZip(storage, status);
+      if (result.bytes > 0) {
+        built++;
+        builtBytes += result.bytes;
+        console.log(`  built ${status.key} (${formatBytes(result.bytes)})`);
+      }
+      deleted += result.deleted.length;
+      result.deleted.forEach((k) => console.log(`  deleted old ${k}`));
+    } catch (err) {
+      failed++;
+      console.error(`  FAILED: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  if (!confirm) {
+    console.log(
+      `\n${instances.length} year(s): ${toBuild} to build, ${upToDate} up to date.` +
+        `\nDry run -- nothing built or deleted. Re-run with --confirm to build.`
+    );
+    return;
+  }
+  console.log(
+    `\n${instances.length} year(s): ${built} built (${formatBytes(builtBytes)}), ${upToDate} already up to date,` +
+      ` ${deleted} old zip(s) deleted, ${failed} failed.`
+  );
+  if (failed > 0) process.exitCode = 1;
 }
 
 async function runPublish(args: ParsedArgs): Promise<void> {
@@ -457,6 +567,8 @@ async function runPublish(args: ParsedArgs): Promise<void> {
     console.log(`Moved ${result.filesRestored} stored file(s) back from quarantine to their original key.`);
   }
   console.log(`Published "${result.title}" (${artifactId}).`);
+  const instance = await getArtifactInstance(artifactId);
+  if (instance) await printYearZipNotices([instance]);
 }
 
 const UNPUBLISH_STATUS_CHOICES: ArtifactStatus[] = ["withdrawn", "rights_hold"];
@@ -498,6 +610,11 @@ async function runUnpublish(args: ParsedArgs): Promise<void> {
     const result = await unpublishArtifact(artifactId, status as "withdrawn" | "rights_hold", reason);
     console.log(`Unpublished "${result.title}" (${artifactId}) -> ${status}.`);
     printQuarantineResult(result);
+    if (result.zipsDeleted > 0) {
+      console.log(`Deleted ${result.zipsDeleted} "Download all" zip(s) of its year, which included it.`);
+    }
+    const instance = await getArtifactInstance(artifactId);
+    if (instance) await printYearZipNotices([instance]);
   }
   if (purge) await runPurge(artifactId, args.flags.confirm === "true", reason);
 }
@@ -928,7 +1045,8 @@ Commands:
       stored file(s) to quarantine/<timestamp>/<original key> (bytes kept,
       logged), so any download link already handed out stops working
       immediately rather than when it expires (up to 10 minutes).
-      Publishing it again moves the file(s) back.
+      Publishing it again moves the file(s) back. Also deletes that year's
+      "Download all" zips (rebuild with build-zips).
 
   unpublish <artifact-id> --purge [--confirm] [--reason <text>]
       As above (or, for a paper that's already unpublished, just makes sure
@@ -965,6 +1083,15 @@ Commands:
       Same for every file in the database. Without --confirm this only
       prints how many would change, with a few examples -- same
       dry-run-by-default pattern as ingest.
+
+  build-zips (--series <code> --year <yyyy> | --all) [--confirm]
+      Build each year's "Download all" zip from the papers that are
+      servable right now, store it (R2 in production) and delete that
+      year's out-of-date zips. The website only ever hands out a zip that
+      exactly matches the current papers; until one is built, "Download
+      all" tells visitors it isn't ready yet. publish and unpublish say
+      when a year needs rebuilding. Years already up to date are skipped.
+      Dry run unless --confirm.
 `;
 
 async function main(): Promise<void> {
@@ -1005,6 +1132,9 @@ async function main(): Promise<void> {
       break;
     case "set-disposition":
       await runSetDisposition(args);
+      break;
+    case "build-zips":
+      await runBuildZips(args);
       break;
     case undefined:
     case "help":

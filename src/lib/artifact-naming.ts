@@ -244,7 +244,11 @@ export function generateDownloadFilename(title: string): string {
  * exact name, percent-encoded as UTF-8, which modern browsers prefer.
  */
 export function contentDispositionHeader(disposition: "inline" | "attachment", title: string): string {
-  const filename = generateDownloadFilename(title);
+  return contentDispositionForFilename(disposition, generateDownloadFilename(title));
+}
+
+/** The same header for any file name, e.g. a year's zip ("Form 5 - Year 11 2019.zip"). */
+export function contentDispositionForFilename(disposition: "inline" | "attachment", filename: string): string {
   // Anything outside printable ASCII becomes "_" in the fallback name.
   // (sanitizeForFilename has already removed `"` and `\`, the two
   // characters that would break out of the quotes.)

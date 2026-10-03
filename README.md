@@ -81,6 +81,12 @@ in the repository.
     under `quarantine/` is ever served). `publish` moves it back.
     `unpublish <artifact-id> --purge` lists what would be permanently
     deleted from quarantine; add `--confirm` to delete it (audit-logged).
+    Unpublishing also deletes that year's "Download all" zips.
+  - `build-zips (--series <code> --year <yyyy> | --all) [--confirm]` —
+    builds each year's "Download all" zip from the papers servable right
+    now and stores it in R2 (the website never builds zips; until a
+    year's zip is built it answers "not ready yet"). `publish` and
+    `unpublish` print the exact command when a year needs rebuilding.
   - `list` — every artifact with its id/status/rights status.
   - `coverage` — the year × subject matrix (spec section 11.3): every
     exam-instance × subject combination, with each cell's real status

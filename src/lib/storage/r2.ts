@@ -4,6 +4,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -165,6 +166,21 @@ export class R2Storage implements StorageProvider {
 
   async delete(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
+  async list(prefix: string): Promise<string[]> {
+    const keys: string[] = [];
+    // R2 answers in pages of up to 1,000 keys; keep asking until it says
+    // there are no more.
+    let continuationToken: string | undefined;
+    do {
+      const page = await this.client.send(
+        new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, ContinuationToken: continuationToken })
+      );
+      for (const object of page.Contents ?? []) if (object.Key) keys.push(object.Key);
+      continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return keys;
   }
 
   // The three methods below are R2-only (they aren't part of the shared

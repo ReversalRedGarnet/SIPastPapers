@@ -24,6 +24,8 @@ let queries: typeof import("@/lib/db/queries");
 let getStorageProvider: typeof import("@/lib/storage").getStorageProvider;
 let fileGET: typeof import("./files/[fileId]/route").GET;
 let zipGET: typeof import("./download-year/[series]/[year]/route").GET;
+let getYearZipStatus: typeof import("@/lib/year-zip-build").getYearZipStatus;
+let syncYearZip: typeof import("@/lib/year-zip-build").syncYearZip;
 let tmpStorageDir: string;
 
 before(async () => {
@@ -38,6 +40,7 @@ before(async () => {
   ({ getStorageProvider } = await import("@/lib/storage"));
   ({ GET: fileGET } = await import("./files/[fileId]/route"));
   ({ GET: zipGET } = await import("./download-year/[series]/[year]/route"));
+  ({ getYearZipStatus, syncYearZip } = await import("@/lib/year-zip-build"));
 });
 
 after(async () => {
@@ -61,6 +64,11 @@ async function served(fileId: string, pageUrlPath: string) {
   });
   await file.body?.cancel();
 
+  // Build (or clear out) the year's zip from what's servable right now, as
+  // the operator does with build-zips after any change -- so "zip: 200"
+  // means a built zip is handed out, and 404 that the year has nothing
+  // that may be served (any old zip is deleted here).
+  await syncYearZip(getStorageProvider(), await getYearZipStatus(getStorageProvider(), SERIES, YEAR));
   const zip = await zipGET(new NextRequest(`http://localhost/api/download-year/${SERIES}/${YEAR}`), {
     params: Promise.resolve({ series: SERIES, year: String(YEAR) }),
   });

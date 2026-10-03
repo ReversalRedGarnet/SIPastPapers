@@ -9,7 +9,7 @@
     "lint": "eslint",
     "cli": "tsx scripts/cli.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
-    "test": "tsx --test scripts/cli-lib.test.ts src/lib/rate-limit.test.ts src/lib/rate-limit-response.test.ts src/lib/log.test.ts src/lib/db/client.test.ts src/lib/db/test-database-env.test.ts src/lib/db/quarantine-key.test.ts src/lib/db/public-paths.test.ts src/lib/db/queries.test.ts src/lib/format.test.ts src/lib/artifact-naming.test.ts src/lib/report-form.test.ts src/lib/missing-papers.test.ts src/lib/storage/r2.test.ts src/lib/storage/local-fs.test.ts src/lib/storage/index.test.ts src/app/api/files/route.test.ts src/app/api/files/route-guards.test.ts src/app/api/quarantine-serving.test.ts"
+    "test": "tsx --test scripts/cli-lib.test.ts src/lib/rate-limit.test.ts src/lib/rate-limit-response.test.ts src/lib/log.test.ts src/lib/db/client.test.ts src/lib/db/test-database-env.test.ts src/lib/db/quarantine-key.test.ts src/lib/db/public-paths.test.ts src/lib/db/queries.test.ts src/lib/format.test.ts src/lib/artifact-naming.test.ts src/lib/report-form.test.ts src/lib/missing-papers.test.ts src/lib/storage/r2.test.ts src/lib/storage/local-fs.test.ts src/lib/storage/index.test.ts src/app/api/files/route.test.ts src/app/api/files/route-guards.test.ts src/app/api/quarantine-serving.test.ts src/app/api/year-zip-route.test.ts src/lib/year-zip.test.ts src/lib/year-zip-build.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",
@@ -18,7 +18,6 @@
     "@vercel/analytics": "^2.0.1",
     "archiver": "^8.0.0",
     "next": "16.3.8",
-    "p-limit": "^7.3.2",
     "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"

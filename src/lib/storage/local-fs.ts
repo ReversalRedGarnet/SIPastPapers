@@ -100,6 +100,28 @@ export class LocalFilesystemStorage implements StorageProvider {
     await fs.rm(this.resolve(key), { force: true });
   }
 
+  async list(prefix: string): Promise<string[]> {
+    // Look only in the folder the prefix points into, then keep the keys
+    // that actually start with the prefix (it may end part-way through a
+    // name, e.g. "zips/sisc-l1/20").
+    const dir = this.resolve(prefix.includes("/") ? prefix.slice(0, prefix.lastIndexOf("/")) : ".");
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir, { recursive: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+    const keys: string[] = [];
+    for (const entry of entries) {
+      const full = path.join(dir, entry);
+      if (!(await fs.stat(full)).isFile()) continue;
+      const key = path.relative(this.rootDir, full).split(path.sep).join("/");
+      if (key.startsWith(prefix)) keys.push(key);
+    }
+    return keys;
+  }
+
   async copy(fromKey: string, toKey: string): Promise<void> {
     const dest = this.resolve(toKey);
     await fs.mkdir(path.dirname(dest), { recursive: true });

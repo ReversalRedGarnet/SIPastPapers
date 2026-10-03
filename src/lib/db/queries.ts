@@ -20,6 +20,7 @@ import {
   generateCanonicalFileName,
 } from "@/lib/artifact-naming";
 import { pdfServingHeaders } from "@/lib/storage/serving-headers";
+import { deleteYearZips } from "@/lib/year-zip";
 import type {
   ArtifactStatus,
   ArtifactType,
@@ -527,6 +528,8 @@ export interface DownloadableYearFile {
   fileId: string;
   storageKey: string;
   title: string;
+  /** The file's recorded fingerprint -- part of what names a year's prebuilt zip (src/lib/year-zip.ts). */
+  sha256: string;
 }
 
 /**
@@ -539,8 +542,8 @@ export const listPublishedFilesForInstance = cache(async (
   seriesCode: string,
   year: number
 ): Promise<DownloadableYearFile[]> => {
-  const rows = await query<{ file_id: string; storage_key: string; title: string }>(
-    `select f.id as file_id, f.storage_key, a.title
+  const rows = await query<{ file_id: string; storage_key: string; title: string; sha256: string }>(
+    `select f.id as file_id, f.storage_key, a.title, f.sha256
      from artifacts a
      join exam_instances ei on ei.id = a.exam_instance_id
      join exam_series es on es.id = ei.exam_series_id
@@ -549,8 +552,38 @@ export const listPublishedFilesForInstance = cache(async (
      order by a.title`,
     [seriesCode, year]
   );
-  return rows.map((r) => ({ fileId: r.file_id, storageKey: r.storage_key, title: r.title }));
+  return rows.map((r) => ({ fileId: r.file_id, storageKey: r.storage_key, title: r.title, sha256: r.sha256 }));
 });
+
+/**
+ * Every exam series + year with at least one servable file -- the years
+ * that should have a prebuilt zip (see build-zips in scripts/cli.ts).
+ */
+export async function listServableYearInstances(): Promise<{ seriesCode: string; year: number }[]> {
+  const rows = await query<{ code: string; year: number }>(
+    `select distinct es.code, ei.year
+     from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     join exam_series es on es.id = ei.exam_series_id
+     join files f on f.artifact_id = a.id
+     where ${SERVABLE} and ${IS_CURRENT_FILE}
+     order by es.code, ei.year`
+  );
+  return rows.map((r) => ({ seriesCode: r.code, year: r.year }));
+}
+
+/** The exam series + year a paper belongs to (whatever its status), or undefined for an unknown id. */
+export async function getArtifactInstance(artifactId: string): Promise<{ seriesCode: string; year: number } | undefined> {
+  const row = await queryOne<{ code: string; year: number }>(
+    `select es.code, ei.year
+     from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     join exam_series es on es.id = ei.exam_series_id
+     where a.id = $1`,
+    [artifactId]
+  );
+  return row && { seriesCode: row.code, year: row.year };
+}
 
 /** Gets the most recently published exam papers, for the homepage's "Recently added" list. */
 export const listRecentPublicArtifacts = cache(async (limit: number): Promise<PublicExamRecord[]> => {
@@ -1406,7 +1439,7 @@ export async function unpublishArtifact(
   artifactId: string,
   toStatus: Extract<ArtifactStatus, "withdrawn" | "rights_hold"> = "withdrawn",
   reason?: string | null
-): Promise<{ title: string } & QuarantineResult> {
+): Promise<{ title: string; zipsDeleted: number } & QuarantineResult> {
   const artifact = await queryOne<{ id: string; title: string; status: ArtifactStatus }>(
     "select id, title, status from artifacts where id = $1",
     [artifactId]
@@ -1429,7 +1462,23 @@ export async function unpublishArtifact(
   // From here on the site already refuses to hand the paper out. Moving
   // its stored file(s) also cuts off any download link handed out in the
   // last few minutes, which would otherwise keep working until it expired.
-  return { title: artifact.title, ...(await quarantineArtifactFiles(artifactId)) };
+  const quarantine = await quarantineArtifactFiles(artifactId);
+
+  // The same for its year's zip: every stored zip of that year may include
+  // this paper, so they're all deleted (rebuild with `build-zips`; until
+  // then the year's "Download all" says it isn't ready yet).
+  let zipsDeleted = 0;
+  const instance = await getArtifactInstance(artifactId);
+  if (instance) {
+    try {
+      zipsDeleted = (await deleteYearZips(getStorageProvider(), instance.seriesCode, instance.year)).length;
+    } catch (err) {
+      quarantine.moveErrors.push(
+        `${instance.seriesCode} ${instance.year} year zip: couldn't delete it: ${errorText(err)}`
+      );
+    }
+  }
+  return { title: artifact.title, ...quarantine, zipsDeleted };
 }
 
 export interface QuarantineResult {

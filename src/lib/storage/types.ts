@@ -83,6 +83,9 @@ export interface StorageProvider {
   /** Deletes whatever is saved at `key`. Should only be used for a deliberate, tracked correction — never as a routine way to overwrite a file. */
   delete(key: string): Promise<void>;
 
+  /** Every key that starts with `prefix` (e.g. "zips/sisc-l1/2019/"), in no particular order. */
+  list(prefix: string): Promise<string[]>;
+
   /** Returns something that can be used to build a download/view link for this file. Not guaranteed to be a public web address for every storage system. */
   locate(key: string): string;
 

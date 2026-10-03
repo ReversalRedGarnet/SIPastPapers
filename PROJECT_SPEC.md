@@ -171,6 +171,19 @@ at a key that doesn't exist, even if a step fails or the process dies
 part-way (`relocateStoredFile` in `src/lib/db/queries.ts`). Publishing
 also refuses a paper whose current file isn't actually in storage.
 
+**Year zips** ("Download all" on a year's browse page) are prebuilt by
+the CLI (`build-zips`) and stored in R2 under
+`zips/<series>/<year>/<fingerprint>.zip`, where the fingerprint covers
+every file inside (id, sha256, name in the zip). `/api/download-year`
+applies the zip rate limit, lists the year's servable files live (the
+same rule as single PDFs), works out the matching key, and redirects to
+a 10-minute presigned link — or answers **503** ("not ready yet",
+logged as `zip` / `not_built`) if that zip hasn't been built. A zip
+that includes a withdrawn paper, or misses a new one, no longer matches
+and is never handed out; `unpublish` also deletes the year's zips at
+once. No zip is ever built by the website, so none of it passes through
+Vercel.
+
 ### 5.2 Storage layout
 
 ```
@@ -747,6 +760,12 @@ The project owner should control the GitHub organization/repository, primary dom
   404 (now a real 404 status: the paper page no longer streams a loading
   screen first). Trade-off: the proxy runs on every browse/paper
   request, including cached ones.
+- **2026-10-03 — Year zips prebuilt in R2 instead of built live.** A
+  live-built zip (20–40 MB) passed through a Vercel function on every
+  download and was the largest remaining source of Fast Origin
+  Transfer. Zips are now built by the CLI and served like PDFs (section
+  5.1). Trade-off: after a publish or unpublish, that year's "Download
+  all" answers 503 until `build-zips` is run (the CLI says when).
 
 ### 14.3 Documentation set
 

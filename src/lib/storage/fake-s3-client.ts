@@ -100,6 +100,19 @@ export function createFakeS3Client() {
           ETag: etagOf(obj.body),
         };
       }
+      if (command instanceof ListObjectsV2Command) {
+        // Pages of 2 keys (real R2: up to 1,000), so paging gets exercised.
+        const { Prefix = "", ContinuationToken } = command.input;
+        const matching = [...objects.keys()].filter((k) => k.startsWith(Prefix)).sort();
+        const start = ContinuationToken ? Number(ContinuationToken) : 0;
+        const page = matching.slice(start, start + 2);
+        const more = start + 2 < matching.length;
+        return {
+          Contents: page.map((Key) => ({ Key })),
+          IsTruncated: more,
+          NextContinuationToken: more ? String(start + 2) : undefined,
+        };
+      }
       if (command instanceof DeleteObjectCommand) {
         objects.delete(command.input.Key!);
         return {};
