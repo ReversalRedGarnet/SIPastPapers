@@ -166,6 +166,7 @@ npm run dev                  # http://localhost:3000 (public site only)
 npm run cli -- coverage      # admin CLI — try `npm run cli -- help` for all commands
 npm run build                # production build + typecheck
 npm run lint
+npm run typecheck            # generates Next's route types, then tsc (what CI runs)
 npm run test:unit            # tests that need no database
 npm run test:db              # database tests; need .env.test.local (Neon branch), see above
 npm run test                 # both
