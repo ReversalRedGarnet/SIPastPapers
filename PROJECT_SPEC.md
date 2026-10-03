@@ -754,8 +754,8 @@ The project owner should control the GitHub organization/repository, primary dom
   the usage). Now only 40 pages are pre-built; the rest are built and
   stored when first visited. Because Next.js also stores a page that
   turns out not to exist, `src/proxy.ts` checks browse and paper
-  addresses against the real ones (loaded from the database at most once
-  a minute) and answers made-up ones with a real, uncached 404. If that
+  addresses against the real ones (loaded from the database at most once every
+  `PAGE_PATHS_REFRESH_SECONDS`, default 300) and answers made-up ones with a real, uncached 404. If that
   list can't be loaded, requests go through and the page answers its own
   404 (now a real 404 status: the paper page no longer streams a loading
   screen first). Trade-off: the proxy runs on every browse/paper

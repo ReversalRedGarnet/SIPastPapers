@@ -1,7 +1,7 @@
 /** judgePath is pure -- no database connection is made here. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { judgePath, type PublicPagePaths } from "./public-paths";
+import { judgePath, refreshAfterMs, type PublicPagePaths } from "./public-paths";
 
 const PATHS: PublicPagePaths = {
   seriesCodes: new Set(["sisc-l1", "sif3-sijsc"]),
@@ -48,4 +48,19 @@ test("addresses that aren't browse or paper pages are left to Next.js", () => {
 test("percent-encoded segments are compared decoded", () => {
   const paths = { ...PATHS, paperPaths: new Set(["sisc-l1/2016/mathematics/paper-a b"]) };
   assert.equal(judgePath(paths, "/exams/sisc-l1/2016/mathematics/paper-a%20b"), "exists");
+});
+
+test("the address list's refresh interval defaults to 300 seconds and can be set with PAGE_PATHS_REFRESH_SECONDS", () => {
+  const saved = process.env.PAGE_PATHS_REFRESH_SECONDS;
+  try {
+    delete process.env.PAGE_PATHS_REFRESH_SECONDS;
+    assert.equal(refreshAfterMs(), 300_000);
+    process.env.PAGE_PATHS_REFRESH_SECONDS = "60";
+    assert.equal(refreshAfterMs(), 60_000);
+    process.env.PAGE_PATHS_REFRESH_SECONDS = "soon";
+    assert.equal(refreshAfterMs(), 300_000, "an invalid value falls back to the default");
+  } finally {
+    if (saved === undefined) delete process.env.PAGE_PATHS_REFRESH_SECONDS;
+    else process.env.PAGE_PATHS_REFRESH_SECONDS = saved;
+  }
 });

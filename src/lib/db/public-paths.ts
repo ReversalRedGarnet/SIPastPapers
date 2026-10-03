@@ -85,13 +85,33 @@ export function judgePath(paths: PublicPagePaths, pathname: string): PathVerdict
 
 // --- the snapshot the proxy uses -------------------------------------------
 //
-// Loaded from the database at most once a minute per running copy of the
-// app, not on every request. A paper published (or withdrawn) is picked up
-// within that minute; until then the page itself still decides.
+// Loaded from the database at most once per refresh interval per running
+// copy of the app, not on every request. A paper published (or withdrawn)
+// is picked up within about that interval; until then a withdrawn paper's
+// page answers for itself, and a newly published one gets a 404 (not
+// stored anywhere).
 
-const REFRESH_AFTER_MS = 60_000;
-/** Past this, a snapshot that can't be refreshed is no longer trusted. */
-const GIVE_UP_AFTER_MS = 10 * 60_000;
+const DEFAULT_REFRESH_SECONDS = 300;
+
+/**
+ * PAGE_PATHS_REFRESH_SECONDS (default 300): how often the list of real
+ * addresses is reloaded. Read each time (it's cheap) so tests can change it.
+ */
+export function refreshAfterMs(): number {
+  const raw = process.env.PAGE_PATHS_REFRESH_SECONDS;
+  if (raw === undefined || raw === "") return DEFAULT_REFRESH_SECONDS * 1000;
+  const seconds = Number(raw);
+  if (Number.isInteger(seconds) && seconds > 0) return seconds * 1000;
+  console.warn(
+    `[public-paths] PAGE_PATHS_REFRESH_SECONDS="${raw}" isn't a whole number above 0 -- using ${DEFAULT_REFRESH_SECONDS}.`
+  );
+  return DEFAULT_REFRESH_SECONDS * 1000;
+}
+
+/** Past this, a snapshot that can't be refreshed is no longer trusted: two missed refreshes, and at least 10 minutes. */
+function giveUpAfterMs(): number {
+  return Math.max(10 * 60_000, 2 * refreshAfterMs());
+}
 /** How long a request waits for the very first snapshot before going ahead without one. */
 const FIRST_LOAD_WAIT_MS = 1_500;
 
@@ -120,9 +140,9 @@ function refresh(now: number): Promise<void> {
 export async function getPublicPagePaths(now: number = Date.now()): Promise<PublicPagePaths | undefined> {
   if (!snapshot) {
     await Promise.race([refresh(now), new Promise((resolve) => setTimeout(resolve, FIRST_LOAD_WAIT_MS))]);
-  } else if (now - snapshot.loadedAt > REFRESH_AFTER_MS) {
+  } else if (now - snapshot.loadedAt > refreshAfterMs()) {
     void refresh(now); // answer from the current snapshot meanwhile
   }
-  if (!snapshot || now - snapshot.loadedAt > GIVE_UP_AFTER_MS) return undefined;
+  if (!snapshot || now - snapshot.loadedAt > giveUpAfterMs()) return undefined;
   return snapshot.paths;
 }
