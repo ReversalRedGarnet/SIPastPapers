@@ -37,6 +37,7 @@ export async function generateMetadata({ params }: SeriesPageProps): Promise<Met
   return {
     title,
     description,
+    alternates: { canonical: `/browse/${series.code}` },
     openGraph: { title, description, type: "website" },
   };
 }

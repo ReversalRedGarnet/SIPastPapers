@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   title: "Browse",
   description:
     "Browse past Solomon Islands national exam papers by exam level — SIF3/SIJSC, SISC Level 1, and SISC Level 2/SINF6 — then by year and subject.",
+  alternates: { canonical: "/browse" },
 };
 
 // The list of exam levels almost never changes — adding a new one is a

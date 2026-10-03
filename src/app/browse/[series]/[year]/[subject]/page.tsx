@@ -33,9 +33,16 @@ export async function generateMetadata({ params }: SubjectPageProps): Promise<Me
   const context = await loadContext(seriesCode, year, subjectSlug);
   if (!context) return { title: "Not found" };
   const label = seriesDisplayLabel(context.series.code);
+  // Same query as the page itself (React's cache() shares the result). No
+  // paper with a file -- nothing yet, or only "not yet recovered"
+  // placeholders -- is a thin page: kept out of search results (and out of
+  // the sitemap), links still followed.
+  const papers = await searchPublicArtifacts({ series: seriesCode, year: String(context.year), subject: subjectSlug });
   return {
     title: `${context.subject.canonicalName} ${context.year} — ${label}`,
     description: `${context.subject.canonicalName} past exam papers for ${label} ${context.year} — Solomon Islands national exam archive.`,
+    alternates: { canonical: `/browse/${context.series.code}/${context.year}/${subjectSlug}` },
+    ...(!papers.some((p) => p.file) && { robots: { index: false, follow: true } }),
   };
 }
 

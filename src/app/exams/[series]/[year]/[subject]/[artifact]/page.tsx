@@ -41,10 +41,15 @@ export async function generateMetadata({
   const seriesLabel = seriesDisplayLabel(record.examSeriesCode);
   const title = `${seriesLabel} ${record.subject} ${record.year} — ${label}`;
   const description = `${label} for ${record.subject} — ${seriesLabel} ${record.year} exam paper from the Solomon Islands national exam archive, free to view and download.`;
+  const path = `/exams/${record.examSeriesCode}/${record.year}/${record.subjectSlug}/${record.slug}`;
   return {
     title,
     description,
-    openGraph: { title, description, type: "article" },
+    alternates: { canonical: path },
+    // A "not yet recovered" placeholder has no document behind it -- a thin
+    // page, kept out of search results (and out of the sitemap).
+    ...(!record.file && { robots: { index: false, follow: true } }),
+    openGraph: { title, description, type: "article", url: path },
   };
 }
 

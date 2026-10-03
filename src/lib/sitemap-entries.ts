@@ -28,9 +28,15 @@ export function buildSitemapEntries(
     { url: `${SITE_URL}/browse`, changeFrequency: "weekly", priority: 0.8 },
   ];
 
+  // Exam levels and years only when they have at least one downloadable
+  // paper: an empty "No papers yet" page is thin (and marked noindex).
+  const seriesWithFiles = new Set(withFiles.map((r) => r.examSeriesCode));
+  const yearsWithFiles = new Set(withFiles.map((r) => `${r.examSeriesCode}/${r.year}`));
   for (const series of examSeries) {
+    if (!seriesWithFiles.has(series.code)) continue;
     entries.push({ url: `${SITE_URL}/browse/${series.code}`, changeFrequency: "weekly", priority: 0.8 });
     for (const year of years) {
+      if (!yearsWithFiles.has(`${series.code}/${year}`)) continue;
       entries.push({ url: `${SITE_URL}/browse/${series.code}/${year}`, changeFrequency: "weekly", priority: 0.7 });
     }
   }

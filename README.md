@@ -186,7 +186,7 @@ token with **read-only** object access. The token that can write
 | `R2_ACCOUNT_ID`, `R2_BUCKET_NAME` | Required | |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Required — **read-only token** | |
 | `RATE_LIMIT_SECRET` | Recommended | Any long random string; without it each running copy signs visitor cookies with its own key. |
-| `NEXT_PUBLIC_SITE_URL` | Optional | Defaults to `https://sipastexams.com`. |
+| `NEXT_PUBLIC_SITE_URL` | Optional | Defaults to `https://www.sipastexams.com` (the bare domain only redirects there). |
 | `RATE_LIMIT_*` overrides | Optional | See `.env.example`. |
 | `PAGE_PATHS_REFRESH_SECONDS` | Optional | How often `src/proxy.ts` reloads the list of real page addresses (default 300). |
 | `DATABASE_URL` | CLI only | Direct connection, for `npm run db:migrate`. |

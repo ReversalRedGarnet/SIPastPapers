@@ -10,6 +10,7 @@ export const metadata: Metadata = {
   title: "Missing papers",
   description:
     "Every past Solomon Islands national exam paper we know about but don't have a copy of yet. Have one? Email it in.",
+  alternates: { canonical: "/missing" },
 };
 
 // Same reasoning as the browse pages -- this only changes when the

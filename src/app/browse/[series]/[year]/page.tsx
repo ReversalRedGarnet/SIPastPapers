@@ -33,9 +33,14 @@ export async function generateMetadata({ params }: YearPageProps): Promise<Metad
   const context = await loadContext(seriesCode, year);
   if (!context) return { title: "Not found" };
   const label = seriesDisplayLabel(context.series.code);
+  // A year with no downloadable papers yet ("No papers yet") is a thin page:
+  // kept out of search results (and out of the sitemap), links still followed.
+  const files = await listPublishedFilesForInstance(context.series.code, context.year);
   return {
     title: `${label} ${context.year}`,
     description: `${label} ${context.year} exam papers, by subject — Solomon Islands national exam archive.`,
+    alternates: { canonical: `/browse/${context.series.code}/${context.year}` },
+    ...(files.length === 0 && { robots: { index: false, follow: true } }),
   };
 }
 
