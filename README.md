@@ -134,8 +134,10 @@ The test suite never uses `.env.local`'s database. It connects to a
 separate Neon **branch** whose pooled connection string goes in
 `.env.test.local` (gitignored) as `DATABASE_URL_POOLED`, and refuses to
 run if that file is missing or points at the same database endpoint as
-`.env.local` (`src/lib/db/test-database-env.ts`). Every test write also
-runs inside a transaction that's always rolled back.
+`.env.local` or `PRODUCTION_DATABASE_HOST`
+(`src/lib/db/test-database-env.ts`). Every test write also runs inside a
+transaction that's always rolled back, and every test uses local file
+storage (it refuses to run with any `R2_*` variable set).
 
 ## Stack
 
@@ -164,8 +166,28 @@ npm run dev                  # http://localhost:3000 (public site only)
 npm run cli -- coverage      # admin CLI — try `npm run cli -- help` for all commands
 npm run build                # production build + typecheck
 npm run lint
-npm run test                 # node:test via tsx --test; needs .env.test.local (Neon branch), see above
+npm run test:unit            # tests that need no database
+npm run test:db              # database tests; need .env.test.local (Neon branch), see above
+npm run test                 # both
 ```
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request, every push to
+`main`, and on demand:
+
+1. **Lint, typecheck, unit tests** — always; needs no secrets.
+2. **Database tests and build** — against a Neon test branch. Needs two
+   repository secrets (Settings → Secrets and variables → Actions):
+   - `TEST_DATABASE_URL_POOLED`: the test **branch's** pooled connection
+     string (the same one as in your `.env.test.local`);
+   - `PRODUCTION_DATABASE_HOST`: the real database's host, e.g.
+     `ep-xxxx.ap-southeast-2.aws.neon.tech` (not a credential), so the
+     tests can refuse to run if the branch string ever points at it.
+
+   Without them (or on a pull request from a fork) this job is skipped with
+   a warning. CI never has R2 credentials or the real database's connection
+   string.
 
 Any locally-stored uploaded files are created on first run under
 `local-storage/` (gitignored, disposable). With `STORAGE_BACKEND=r2`, files

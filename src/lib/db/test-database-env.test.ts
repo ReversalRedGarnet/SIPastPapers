@@ -56,6 +56,26 @@ test("refuses even when it's the production endpoint's direct (unpooled) host", 
   assert.throws(() => loadTestDatabaseEnv(files), /same database/);
 });
 
+test("without .env.local, PRODUCTION_DATABASE_HOST names the real database (as in CI)", () => {
+  rmSync(files.productionEnvFile);
+  delete process.env.PRODUCTION_DATABASE_HOST;
+  writeFileSync(
+    files.testEnvFile,
+    "DATABASE_URL_POOLED=postgresql://u:p@ep-real-123-pooler.ap-southeast-2.aws.neon.tech/db?sslmode=require\n"
+  );
+  assert.throws(() => loadTestDatabaseEnv(files), /can't tell which database is the real one/);
+
+  process.env.PRODUCTION_DATABASE_HOST = "ep-real-123.ap-southeast-2.aws.neon.tech";
+  assert.throws(() => loadTestDatabaseEnv(files), /same database/);
+
+  writeFileSync(
+    files.testEnvFile,
+    "DATABASE_URL_POOLED=postgresql://u:p@ep-branch-456-pooler.ap-southeast-2.aws.neon.tech/db?sslmode=require\n"
+  );
+  loadTestDatabaseEnv(files);
+  assert.match(process.env.DATABASE_URL_POOLED ?? "", /ep-branch-456/);
+});
+
 test("uses the branch database, overriding any connection string already in the environment", () => {
   const branchUrl = "postgresql://u:p@ep-branch-456-pooler.ap-southeast-2.aws.neon.tech/db?sslmode=require";
   writeFileSync(files.testEnvFile, `DATABASE_URL_POOLED=${branchUrl}\n`);

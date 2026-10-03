@@ -13,7 +13,9 @@ import { parseEnv } from "node:util";
  * As a safety check, this refuses to run at all -- throwing before any
  * test can connect -- if that file is missing, if it points at the same
  * database server as `.env.local` (the real database, used by the site and
- * the CLI), or if any R2_* storage settings are in the environment. It
+ * the CLI) or as PRODUCTION_DATABASE_HOST (how CI names the real database),
+ * if neither of those is available to compare against, or if any R2_*
+ * storage settings are in the environment. It
  * also forces local file storage. Tests insert rows inside transactions
  * that are always rolled back, but a bug in a test should never be able
  * to touch real data or real stored files.
@@ -57,17 +59,29 @@ export function loadTestDatabaseEnv({
     throw new Error(`Refusing to run database tests: ${testEnvFile} has no DATABASE_URL_POOLED.`);
   }
 
-  if (existsSync(productionEnvFile)) {
-    const productionEnv = readEnvFile(productionEnvFile);
-    const productionHosts = [productionEnv.DATABASE_URL, productionEnv.DATABASE_URL_POOLED]
-      .filter((url): url is string => Boolean(url))
-      .map(endpointHost);
-    if (productionHosts.includes(endpointHost(testUrl))) {
-      throw new Error(
-        `Refusing to run database tests: ${testEnvFile} points at the same database (${endpointHost(testUrl)}) ` +
-          `as ${productionEnvFile}. Use a separate Neon branch for tests.`
-      );
-    }
+  // The real database's endpoint, from .env.local and/or from
+  // PRODUCTION_DATABASE_HOST (its host name, e.g. ep-xxx.<region>.aws.neon.tech,
+  // or a full connection string) -- the latter is how CI, which has no
+  // .env.local, tells this check what to compare against.
+  const productionEnv = existsSync(productionEnvFile) ? readEnvFile(productionEnvFile) : {};
+  const productionHosts = [productionEnv.DATABASE_URL, productionEnv.DATABASE_URL_POOLED]
+    .filter((url): url is string => Boolean(url))
+    .map(endpointHost);
+  const declaredHost = process.env.PRODUCTION_DATABASE_HOST?.trim();
+  if (declaredHost) {
+    productionHosts.push(declaredHost.includes("://") ? endpointHost(declaredHost) : endpointHost(`postgresql://${declaredHost}`));
+  }
+  if (productionHosts.length === 0) {
+    throw new Error(
+      `Refusing to run database tests: can't tell which database is the real one -- there's no ${productionEnvFile} ` +
+        `with its connection strings, and PRODUCTION_DATABASE_HOST isn't set.`
+    );
+  }
+  if (productionHosts.includes(endpointHost(testUrl))) {
+    throw new Error(
+      `Refusing to run database tests: ${testEnvFile} points at the same database (${endpointHost(testUrl)}) ` +
+        `as the real one. Use a separate Neon branch for tests.`
+    );
   }
 
   // Tests must never be able to write to the real file storage bucket.

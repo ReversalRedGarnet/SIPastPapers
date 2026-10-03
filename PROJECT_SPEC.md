@@ -354,6 +354,13 @@ si-national-exam-archive/
 - Run migration step separately and safely.
 - Post-deploy smoke tests: homepage, search, one sample document, storage access.
 
+*Status (2026-10-03):* `.github/workflows/ci.yml` runs lint, typecheck and
+unit tests on every pull request and push to main, then the database tests
+and the build against a Neon test branch (README, "Continuous
+integration"). Deploy previews and production deploys from main come from
+Vercel. Not yet done: schema validation, post-deploy smoke tests, and
+branch protection (a GitHub setting).
+
 ### 10.3 Environment separation
 
 ```
@@ -713,7 +720,9 @@ The project owner should control the GitHub organization/repository, primary dom
   scoped to transient connection-level errors only (never query-level
   errors, and never a query already running inside an open transaction,
   since retrying that could land on a different connection mid-
-  transaction).
+  transaction). *Amended 2026-09-19:* `web` is now 9s timeout × 2
+  attempts (worst case ~18.5s) -- a single 5s attempt failed visitors'
+  requests while Neon woke from suspend; `cli` is unchanged.
 - **2026-09-14 — `createIssue` excluded from connection retry.** It's a
   non-transactional INSERT with no natural unique constraint on `issues`
   to dedupe on (two people can legitimately report the same problem), so
