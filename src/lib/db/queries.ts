@@ -175,11 +175,14 @@ const PUBLIC_ARTIFACT_SELECT = `
   -- row. "lateral (...)" runs a small query-within-a-query separately for
   -- each artifact row, here to fetch just its single most recently added
   -- file (order by created_at desc limit 1) -- this is what a "subquery"
-  -- is: a query nested inside another query.
+  -- is: a query nested inside another query. Only a published paper's
+  -- file is shown: a "not yet recovered" placeholder that has somehow been
+  -- given one still lists as a placeholder (and the file route won't serve
+  -- it either -- see SERVABLE).
   left join lateral (
     select id, sha256, mime, bytes
     from files
-    where artifact_id = a.id
+    where artifact_id = a.id and a.status = 'published'
     order by created_at desc, id desc
     limit 1
   ) f on true

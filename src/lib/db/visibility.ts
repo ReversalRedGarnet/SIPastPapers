@@ -75,7 +75,13 @@ export const SERVABLE = `(a.status = 'published' and ${RIGHTS_CURRENTLY_APPROVED
 
 /**
  * SQL: everything the public may see -- servable papers, plus "not yet
- * recovered" placeholders, which are listed so a gap is visible but have
- * no file (so no rights question arises).
+ * recovered" placeholders, which are listed so a gap is visible. A
+ * placeholder normally has no file, so no rights question arises; one that
+ * has been given a file anyway gets the same live rights (and quarantine)
+ * check as a published paper before it's listed -- and even then its file
+ * is never shown or served (see PUBLIC_ARTIFACT_SELECT and SERVABLE).
  */
-export const PUBLICLY_VISIBLE = `(${SERVABLE} or a.status = 'not_yet_recovered')`;
+export const PUBLICLY_VISIBLE = `(${SERVABLE} or (a.status = 'not_yet_recovered' and (
+  not exists (select 1 from files fp where fp.artifact_id = a.id)
+  or (${RIGHTS_CURRENTLY_APPROVED} and ${NO_QUARANTINED_FILES})
+)))`;

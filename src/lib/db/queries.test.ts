@@ -21,8 +21,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadTestDatabaseEnv } from "./test-database-env";
 import { query, queryOne, withRolledBackTransaction, closePool } from "./client";
-import { createPagePathsSnapshot, loadPublicPagePaths } from "./public-paths";
+import { createPagePathsSnapshot, judgePath, loadPublicPagePaths } from "./public-paths";
 import { artifactSlug } from "@/lib/artifact-naming";
+import { listBrowseYears } from "@/lib/browse-years";
+import { SITE_URL } from "@/lib/site";
+import { buildSitemapEntries } from "@/lib/sitemap-entries";
 import type { CoverageCell, FileRelocation } from "@/lib/db/queries";
 import type { StorageProvider } from "@/lib/storage";
 import { fakeR2Storage } from "@/lib/storage/fake-s3-client";
@@ -919,5 +922,57 @@ test("the proxy finds a freshly published paper on its first request, without wa
 
     await publishTestPaper("45");
     assert.equal(await snapshot.judge(address, 31_000), "exists", "found once 30 s have passed since the last reload");
+  });
+});
+
+test("a not-yet-recovered placeholder given a file is listed only with approved rights, and its file is never shown, served or put in the sitemap", async () => {
+  await withRolledBackTransaction(async () => {
+    const { artifactId } = await queries.ingestArtifact({
+      examSeriesCode: "sisc-l1",
+      year: 2099,
+      subjectSlug: "mathematics",
+      artifactType: "question_paper",
+      paperNo: "46",
+      file: { buffer: Buffer.from("%PDF-1.4\n%placeholder-with-file\n"), mime: "application/pdf" },
+    });
+    await query("update artifacts set status = 'not_yet_recovered' where id = $1", [artifactId]);
+    const [fileRow] = await query<{ id: string }>("select id from files where artifact_id = $1", [artifactId]);
+    const slug = artifactSlug({ artifactType: "question_paper", paperNo: "46" });
+    const address = `/exams/sisc-l1/2099/mathematics/${slug}`;
+
+    async function seen() {
+      const search = await queries.searchPublicArtifacts({ series: "sisc-l1", year: "2099", subject: "mathematics" });
+      const record = search.find((r) => r.id === artifactId);
+      const sitemap = buildSitemapEntries(
+        await queries.listExamSeries(),
+        await queries.searchPublicArtifacts({}),
+        listBrowseYears()
+      ).map((e) => e.url);
+      return {
+        search: record !== undefined,
+        fileShown: Boolean(record?.file),
+        bySlug: (await queries.getPublicArtifactBySlug("sisc-l1", 2099, "mathematics", slug)) !== undefined,
+        proxy: judgePath(await loadPublicPagePaths(), address) === "exists",
+        sitemap: sitemap.includes(`${SITE_URL}${address}`),
+        download: (await queries.getFileForDownload(fileRow.id)) !== undefined,
+      };
+    }
+    const hidden = { search: false, fileShown: false, bySlug: false, proxy: false, sitemap: false, download: false };
+    const listedAsPlaceholder = { ...hidden, search: true, bySlug: true, proxy: true };
+
+    assert.deepEqual(await seen(), hidden, "rights not approved (as ingested): hidden everywhere");
+
+    await queries.approveRights(artifactId, {
+      basis: "teacher-verified",
+      approvedBy: "Test Verifier",
+      evidenceUri: "file://evidence/placeholder-with-file.pdf",
+    });
+    assert.deepEqual(await seen(), listedAsPlaceholder, "approved: listed, but still only as a placeholder");
+
+    await query("update rights_records set expiry_date = current_date - 1 where artifact_id = $1", [artifactId]);
+    assert.deepEqual(await seen(), hidden, "rights expired: hidden again");
+
+    await query("delete from files where artifact_id = $1", [artifactId]);
+    assert.deepEqual(await seen(), listedAsPlaceholder, "with no file, a placeholder is listed whatever its rights");
   });
 });
