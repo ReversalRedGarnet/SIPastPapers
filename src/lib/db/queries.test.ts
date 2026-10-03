@@ -67,7 +67,7 @@ after(async () => {
   await closePool();
 });
 
-test("publish is refused until basis, approved_by and evidence_uri are all set, then succeeds", async () => {
+test("publish is refused until basis, approved_by, evidence_uri and an approved rights status are all in place, then succeeds", async () => {
   await withRolledBackTransaction(async () => {
     const { artifactId } = await queries.ingestArtifact({
       examSeriesCode: "sisc-l1",
@@ -81,20 +81,29 @@ test("publish is refused until basis, approved_by and evidence_uri are all set, 
     const beforeApproval = await queries.publishArtifact(artifactId);
     assert.ok("missing" in beforeApproval, "publish should be refused before rights are approved");
     if ("missing" in beforeApproval) {
-      assert.deepEqual([...beforeApproval.missing].sort(), ["approved_by", "basis", "evidence_uri"]);
+      assert.deepEqual([...beforeApproval.missing].sort(), [
+        'an approved rights_status (currently "pending_institutional_approval")',
+        "approved_by",
+        "basis",
+        "evidence_uri",
+      ]);
     }
 
+    // approveRights fills in all three fields and sets an approved status
+    // (with no expiry date) -- every condition the gate checks.
     await queries.approveRights(artifactId, {
       basis: "teacher-verified",
       approvedBy: "Test Verifier",
       evidenceUri: "file://evidence/1.pdf",
     });
+    assert.deepEqual(await queries.checkRightsGate(artifactId), { satisfied: true, missing: [] });
 
     const afterApproval = await queries.publishArtifact(artifactId);
     assert.ok(!("missing" in afterApproval), "publish should succeed once rights are approved");
     if (!("missing" in afterApproval)) {
       assert.ok(afterApproval.title.length > 0);
     }
+    assert.equal(await queries.getArtifactStatus(artifactId), "published");
   });
 });
 
