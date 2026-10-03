@@ -49,15 +49,18 @@ export async function generateMetadata({
 }
 
 // This content only changes when the operator publishes/unpublishes
-// something via the command-line tool — occasional, not continuous — so
-// the same 5-minute cache tier as the subject-listing page (one level up
-// in the browse hierarchy) works fine here too.
+// something via the command-line tool -- occasional, not continuous -- so
+// the page is refreshed at most once an hour. After an unpublish, the
+// page's text can stay up for up to that hour, but the PDF itself stops at
+// once: /api/files checks publication and rights live on every request.
+// (Refreshing a page whose content hasn't changed costs no ISR write, so
+// the interval mostly saves function runs and database wake-ups.)
 //
 // This only takes effect because nothing on this page reads the address's
 // query string on the server (the report form's "?report=" message is read
 // in the browser instead -- see ReportStatus). Reading `searchParams` here
 // would make Next.js render the page fresh for every single visit.
-export const revalidate = 300;
+export const revalidate = 3600;
 
 // Returning an empty list means "don't build any of these pages ahead of
 // time" -- each paper's page is built the first time someone visits it,

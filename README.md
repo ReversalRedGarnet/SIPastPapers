@@ -162,6 +162,29 @@ Any locally-stored uploaded files are created on first run under
 `local-storage/` (gitignored, disposable). With `STORAGE_BACKEND=r2`, files
 go to the configured R2 bucket instead.
 
+## Environment variables: Vercel vs. CLI-only
+
+The website never writes to R2: it only reads (and hands out short-lived
+download links). Give Vercel — Production **and** Preview — an R2 API
+token with **read-only** object access. The token that can write
+(ingest, unpublish, purge, set-disposition) stays in your local
+`.env.local` for the CLI only.
+
+| Variable | Vercel (Production / Preview) | Notes |
+|---|---|---|
+| `DATABASE_URL_POOLED` | Required | Build and runtime. Preview should use a Neon **branch**, not production: the report form is the one thing the site writes, and it writes here. |
+| `STORAGE_BACKEND=r2` | Required | Without it the site looks for files on local disk, which Vercel doesn't have. |
+| `R2_ACCOUNT_ID`, `R2_BUCKET_NAME` | Required | |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Required — **read-only token** | |
+| `RATE_LIMIT_SECRET` | Recommended | Any long random string; without it each running copy signs visitor cookies with its own key. |
+| `NEXT_PUBLIC_SITE_URL` | Optional | Defaults to `https://sipastexams.com`. |
+| `RATE_LIMIT_*` overrides | Optional | See `.env.example`. |
+| `DATABASE_URL` | CLI only | Direct connection, for `npm run db:migrate`. |
+| `DB_POOL_PROFILE`, `SIPASTPAPERS_STORAGE_ROOT` | CLI / local only | |
+
+`VERCEL_REGION` is set by Vercel itself. Building the site runs no
+migrations and writes nothing.
+
 ## License
 
 Code is MIT-licensed — see [`LICENSE`](./LICENSE). This covers the
