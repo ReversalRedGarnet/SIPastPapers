@@ -183,7 +183,8 @@ export default async function HomePage() {
         <div style={{ marginTop: "2rem" }}>
           <div className="section-header">
             <h2>Recently added</h2>
-            <Link href="/results">View all</Link>
+            {/* No prefetching: /results is rendered fresh on every request. */}
+            <Link prefetch={false} href="/results">View all</Link>
           </div>
 
           <div className="data-table table-scroll">
