@@ -7,6 +7,7 @@ import { artifactListLabel } from "@/lib/artifact-naming";
 import { Badge } from "@/components/Badge";
 import { listBrowseYears } from "@/lib/browse-years";
 import { seriesDisplayLabel, statusLabel, statusTone } from "@/lib/format";
+import { paperPath } from "@/lib/page-links";
 
 interface SubjectPageProps {
   params: Promise<{ series: string; year: string; subject: string }>;
@@ -103,7 +104,7 @@ export default async function SubjectPage({ params }: SubjectPageProps) {
         ) : (
           <ul className="list-rows">
             {papers.map((paper) => {
-              const href = `/exams/${seriesCode}/${year}/${subjectSlug}/${paper.slug}`;
+              const href = paperPath(paper);
               const label = artifactListLabel(paper.artifactType, paper.paperNumber);
               return (
                 <li key={paper.id}>

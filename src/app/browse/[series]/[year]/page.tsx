@@ -10,6 +10,7 @@ import {
 import { BrowseSidebar } from "@/components/BrowseSidebar";
 import { listBrowseYears } from "@/lib/browse-years";
 import { seriesDisplayLabel } from "@/lib/format";
+import { browseSubjectPath } from "@/lib/page-links";
 
 interface YearPageProps {
   params: Promise<{ series: string; year: string }>;
@@ -118,7 +119,7 @@ export default async function YearPage({ params }: YearPageProps) {
           <ul className="list-rows">
             {subjects.map((subject) => (
               <li key={subject.slug}>
-                <Link href={`/browse/${seriesCode}/${year}/${subject.slug}`} className="list-row" prefetch={false}>
+                <Link href={browseSubjectPath(seriesCode, year, subject.slug)} className="list-row" prefetch={false}>
                   <span className="list-row__label">{subject.name}</span>
                   <span className="list-row__meta">
                     {subject.count} {subject.count === 1 ? "paper" : "papers"}

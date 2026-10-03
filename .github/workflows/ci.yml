@@ -34,6 +34,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # Route types such as LayoutProps are generated into .next/types, which
+      # a fresh checkout doesn't have -- tsc fails without them.
+      - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npm run test:unit
 

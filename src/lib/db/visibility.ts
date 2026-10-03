@@ -1,11 +1,21 @@
 import type { RightsStatus } from "@/types/domain";
 
 /**
- * The rules for what the public may see and download, as SQL fragments
- * shared by every public read (src/lib/db/queries.ts) and by the proxy's
- * check of which page addresses exist (src/lib/db/public-paths.ts) -- kept
- * in one small module so the two can never disagree.
+ * The rules for what the public may see and download, and how a subject
+ * is named in page addresses, as SQL fragments shared by every public read
+ * (src/lib/db/queries.ts) and by the proxy's check of which page addresses
+ * exist (src/lib/db/public-paths.ts) -- kept in one small module so the
+ * two can never disagree.
  */
+
+/**
+ * SQL, for use inside a query on `subjects s`: the subject's part of a
+ * page address -- its subject_code, or its id when it has none. Never
+ * null, so no link is ever built with an empty or "null" subject part;
+ * the same rule as the browse-subject page, the coverage matrix and the
+ * stored file names.
+ */
+export const SUBJECT_SLUG = "coalesce(s.subject_code, s.id::text)";
 
 /**
  * The rights statuses under which a paper may be public (PROJECT_SPEC

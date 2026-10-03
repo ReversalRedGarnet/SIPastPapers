@@ -26,7 +26,11 @@ import { artifactSlug } from "@/lib/artifact-naming";
 import { listBrowseYears } from "@/lib/browse-years";
 import { SITE_URL } from "@/lib/site";
 import { buildSitemapEntries } from "@/lib/sitemap-entries";
+import { browseSubjectPath, paperPath } from "@/lib/page-links";
+import { PUBLICLY_VISIBLE } from "./visibility";
+import { collectPublicUrls } from "../../../scripts/public-urls";
 import type { CoverageCell, FileRelocation } from "@/lib/db/queries";
+import type { ArtifactType } from "@/types/domain";
 import type { StorageProvider } from "@/lib/storage";
 import { fakeR2Storage } from "@/lib/storage/fake-s3-client";
 import { pdfServingHeaders } from "@/lib/storage/serving-headers";
@@ -975,4 +979,90 @@ test("a not-yet-recovered placeholder given a file is listed only with approved 
     await query("delete from files where artifact_id = $1", [artifactId]);
     assert.deepEqual(await seen(), listedAsPlaceholder, "with no file, a placeholder is listed whatever its rights");
   });
+});
+
+test("a subject with no code still gets working page links: none has a null, undefined or empty part, and the proxy knows every one", async () => {
+  await withRolledBackTransaction(async () => {
+    const series = "sisc-l2-sinf6";
+    const year = 2024;
+    const subject = await insertTestSubject();
+    const { artifactId } = await queries.ingestArtifact({
+      examSeriesCode: series,
+      year,
+      subjectSlug: subject.slug,
+      artifactType: "question_paper",
+      paperNo: "1",
+      file: { buffer: Buffer.from("%PDF-1.4\n%no-subject-code\n"), mime: "application/pdf" },
+    });
+    await queries.approveRights(artifactId, {
+      basis: "teacher-verified",
+      approvedBy: "Test Verifier",
+      evidenceUri: "file://evidence/no-subject-code.pdf",
+    });
+    assert.ok(!("missing" in (await queries.publishArtifact(artifactId))), "test paper should publish");
+    // Ingesting looks a subject up by its code, so take the code away only now.
+    await query("update subjects set subject_code = null where id = $1", [subject.id]);
+    const slug = artifactSlug({ artifactType: "question_paper", paperNo: "1" });
+
+    // Every link a public page builds with a subject in it, from the same
+    // queries and helpers the pages use.
+    const records = [
+      ...(await queries.searchPublicArtifacts({})),
+      ...(await queries.listRecentPublicArtifacts(10_000)),
+      ...(await queries.listSubjectArtifacts(series, subject.id)),
+    ];
+    const bySlug = await queries.getPublicArtifactBySlug(series, year, subject.id, slug);
+    assert.ok(bySlug, "the paper's page is found under the subject's id");
+    records.push(bySlug.record, ...bySlug.related);
+    const links = [
+      ...records.flatMap((r) => [paperPath(r), browseSubjectPath(r.examSeriesCode, r.year, r.subjectSlug)]),
+      ...(await queries.listPublicSubjectsForInstance(series, year)).map((s) => browseSubjectPath(series, year, s.slug)),
+      ...buildSitemapEntries(await queries.listExamSeries(), records, listBrowseYears())
+        .map((e) => e.url.slice(SITE_URL.length))
+        .filter((p) => p.startsWith("/browse/") || p.startsWith("/exams/")),
+    ];
+    const reportPath = await queries.getPublicArtifactPath(artifactId);
+    assert.equal(reportPath, `/exams/${series}/${year}/${subject.id}/${slug}`);
+    links.push(reportPath);
+
+    assert.ok(links.includes(browseSubjectPath(series, year, subject.id)), "the year page links to the subject");
+    const paths = await loadPublicPagePaths();
+    for (const link of links) {
+      assert.doesNotMatch(link, /\/(null|undefined)?(\/|$)/, `${link} has a null, undefined or empty part`);
+      assert.equal(judgePath(paths, link), "exists", `the proxy would answer ${link} with a 404`);
+    }
+  });
+});
+
+test("the subject-slug rule changed no existing public address: every subject with a code is still linked by its code", async () => {
+  // The addresses as the pages build them now (scripts/public-urls.ts)...
+  const now = await collectPublicUrls(queries);
+  const codeless = new Set(
+    (await query<{ id: string }>("select id from subjects where subject_code is null")).map((r) => r.id)
+  );
+  const subjectPart = (line: string) => line.split(" ")[1].split("/")[4];
+  const current = (prefix: string, parts: number) =>
+    now
+      .filter((l) => l.startsWith(`link ${prefix}`) && l.split(" ")[1].split("/").length === parts)
+      .filter((l) => !codeless.has(subjectPart(l)))
+      .map((l) => l.slice("link ".length));
+
+  // ...against the old rule: the subject part was subject_code itself.
+  const rows = await query<{ code: string; year: number; subject_code: string; type: ArtifactType; paper_no: string | null }>(
+    `select es.code, ei.year, s.subject_code, a.type, a.paper_no
+     from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     join exam_series es on es.id = ei.exam_series_id
+     join subjects s on s.id = a.subject_id
+     where ${PUBLICLY_VISIBLE} and s.subject_code is not null`
+  );
+  const unique = (xs: string[]) => [...new Set(xs)].sort();
+  const oldPapers = unique(
+    rows.map((r) => `/exams/${r.code}/${r.year}/${r.subject_code}/${artifactSlug({ artifactType: r.type, paperNo: r.paper_no })}`)
+  );
+  const oldSubjectPages = unique(rows.map((r) => `/browse/${r.code}/${r.year}/${r.subject_code}`));
+
+  assert.ok(oldPapers.length > 0, "the test database has public papers to compare");
+  assert.deepEqual(unique(current("/exams/", 6)), oldPapers);
+  assert.deepEqual(unique(current("/browse/", 5)), oldSubjectPages);
 });

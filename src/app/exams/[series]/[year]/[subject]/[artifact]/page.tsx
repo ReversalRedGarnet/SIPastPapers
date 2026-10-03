@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { getPublicArtifactBySlug, listSubjectArtifacts } from "@/lib/db/queries";
 import { artifactListLabel } from "@/lib/artifact-naming";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
+import { browseSubjectPath, paperPath } from "@/lib/page-links";
 import { CONTACT_EMAIL, SITE_NAME, SITE_URL } from "@/lib/site";
 import { PdfPreview } from "@/components/PdfPreview";
 import { ReportStatus } from "@/components/ReportStatus";
@@ -41,7 +42,7 @@ export async function generateMetadata({
   const seriesLabel = seriesDisplayLabel(record.examSeriesCode);
   const title = `${seriesLabel} ${record.subject} ${record.year} — ${label}`;
   const description = `${label} for ${record.subject} — ${seriesLabel} ${record.year} exam paper from the Solomon Islands national exam archive, free to view and download.`;
-  const path = `/exams/${record.examSeriesCode}/${record.year}/${record.subjectSlug}/${record.slug}`;
+  const path = paperPath(record);
   return {
     title,
     description,
@@ -89,7 +90,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
   if (!found) notFound();
   const { record, related } = found;
 
-  const currentPath = `/exams/${record.examSeriesCode}/${record.year}/${record.subjectSlug}/${record.slug}`;
+  const currentPath = paperPath(record);
   const typeLabel = artifactListLabel(record.artifactType, record.paperNumber);
   const seriesLabel = seriesDisplayLabel(record.examSeriesCode);
 
@@ -146,13 +147,6 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
   const otherYears = Array.from(
     new Set(subjectArtifacts.filter((r) => r.year !== record.year).map((r) => r.year))
   ).sort((a, b) => b - a);
-  // `(typeof subjectArtifacts)[number]` asks TypeScript "what's the type of
-  // one single item inside the subjectArtifacts array?" -- handy for typing
-  // a helper function that operates on one of those items, without needing
-  // to give that item shape its own separate name.
-  const paperHref = (r: (typeof subjectArtifacts)[number]) =>
-    `/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`;
-
   return (
     <>
       {/* `dangerouslySetInnerHTML` is React's deliberately scary-sounding name
@@ -179,7 +173,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
         <Link prefetch={false} href="/browse">Browse</Link> ›{" "}
         <Link prefetch={false} href={`/browse/${record.examSeriesCode}`}>{seriesLabel}</Link> ›{" "}
         <Link prefetch={false} href={`/browse/${record.examSeriesCode}/${record.year}`}>{record.year}</Link> ›{" "}
-        <Link prefetch={false} href={`/browse/${record.examSeriesCode}/${record.year}/${record.subjectSlug}`}>
+        <Link prefetch={false} href={browseSubjectPath(record.examSeriesCode, record.year, record.subjectSlug)}>
           {record.subject}
         </Link>{" "}
         › {typeLabel}
@@ -258,7 +252,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
       {(prevPaper || nextPaper) && (
         <nav aria-label="Adjacent papers in this subject" className="paper-pager">
           {prevPaper ? (
-            <Link prefetch={false} href={paperHref(prevPaper)} className="paper-pager__link paper-pager__link--prev">
+            <Link prefetch={false} href={paperPath(prevPaper)} className="paper-pager__link paper-pager__link--prev">
               <span className="paper-pager__direction">‹ Previous</span>
               <span className="paper-pager__label">
                 {prevPaper.subject} {prevPaper.year} — {artifactListLabel(prevPaper.artifactType, prevPaper.paperNumber)}
@@ -268,7 +262,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
             <span />
           )}
           {nextPaper ? (
-            <Link prefetch={false} href={paperHref(nextPaper)} className="paper-pager__link paper-pager__link--next">
+            <Link prefetch={false} href={paperPath(nextPaper)} className="paper-pager__link paper-pager__link--next">
               <span className="paper-pager__direction">Next ›</span>
               <span className="paper-pager__label">
                 {nextPaper.subject} {nextPaper.year} — {artifactListLabel(nextPaper.artifactType, nextPaper.paperNumber)}
@@ -286,7 +280,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
           <ul className="list-rows">
             {otherYears.map((y) => (
               <li key={y}>
-                <Link prefetch={false} href={`/browse/${record.examSeriesCode}/${y}/${record.subjectSlug}`} className="list-row">
+                <Link prefetch={false} href={browseSubjectPath(record.examSeriesCode, y, record.subjectSlug)} className="list-row">
                   <span className="list-row__label">
                     {record.subject} {y}
                   </span>
@@ -308,7 +302,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
               <li key={r.id}>
                 <Link
                   prefetch={false}
-                  href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}
+                  href={paperPath(r)}
                   className="list-row"
                 >
                   <span className="list-row__label">

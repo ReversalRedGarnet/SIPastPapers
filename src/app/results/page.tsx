@@ -3,6 +3,7 @@ import Link from "next/link";
 import { listExamSeries, listSubjects, listYears, searchPublicArtifactsPageCached } from "@/lib/db/queries";
 import { artifactTypeLabel, paperVariantLabel } from "@/lib/artifact-naming";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
+import { paperPath } from "@/lib/page-links";
 import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 
 export const metadata: Metadata = {
@@ -224,7 +225,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                     variable (`href`) needs to be worked out first, before the JSX
                     that uses it. */}
                 {records.map((r) => {
-                  const href = `/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`;
+                  const href = paperPath(r);
                   const variant = paperVariantLabel(r.paperNumber);
                   const typeLabel = variant
                     ? `${artifactTypeLabel(r.artifactType)} (${variant})`
