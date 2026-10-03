@@ -123,12 +123,15 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
           <button type="submit">Search</button>
         </div>
 
+        <p id="filter-hint" className="visually-hidden">
+          Choosing a filter updates the results. With a keyboard, press Enter to apply it.
+        </p>
         <div className="search-form__filters field">
           <div>
             <label htmlFor="series" className="visually-hidden">
               Exam level
             </label>
-            <AutoSubmitSelect id="series" name="series" defaultValue={filters.series ?? ""}>
+            <AutoSubmitSelect id="series" name="series" defaultValue={filters.series ?? ""} aria-describedby="filter-hint">
               <option value="">Any exam level</option>
               {examSeries.map((s) => (
                 <option key={s.code} value={s.code}>
@@ -141,7 +144,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
             <label htmlFor="year" className="visually-hidden">
               Year
             </label>
-            <AutoSubmitSelect id="year" name="year" defaultValue={filters.year ?? ""}>
+            <AutoSubmitSelect id="year" name="year" defaultValue={filters.year ?? ""} aria-describedby="filter-hint">
               <option value="">Any year</option>
               {years.map((y) => (
                 <option key={y} value={y}>
@@ -154,7 +157,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
             <label htmlFor="subject" className="visually-hidden">
               Subject
             </label>
-            <AutoSubmitSelect id="subject" name="subject" defaultValue={filters.subject ?? ""}>
+            <AutoSubmitSelect id="subject" name="subject" defaultValue={filters.subject ?? ""} aria-describedby="filter-hint">
               <option value="">Any subject</option>
               {subjects.map((s) => (
                 <option key={s.id} value={s.subjectCode ?? s.id}>
@@ -233,13 +236,16 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                       <td data-label="Type">{typeLabel}</td>
                       <td data-label="Exam level">{seriesDisplayLabel(r.examSeriesCode)}</td>
                       <td>
-                        <Link href={href}>View</Link>
-                        {r.file && (
-                          <>
-                            {" · "}
-                            <a href={`/api/files/${r.file.id}`}>Open PDF ({formatBytes(r.file.bytes)})</a>
-                          </>
-                        )}
+                        <div className="row-actions">
+                          <Link href={href} className="table-action">
+                            View
+                          </Link>
+                          {r.file && (
+                            <a href={`/api/files/${r.file.id}`} className="table-action">
+                              Open PDF ({formatBytes(r.file.bytes)})
+                            </a>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

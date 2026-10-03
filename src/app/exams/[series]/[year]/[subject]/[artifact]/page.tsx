@@ -187,10 +187,10 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
 
       <div className="doc-layout">
         <div className="doc-meta card">
-          <h1>{record.subject}</h1>
-          <p className="doc-subtitle">
-            {seriesLabel} · {record.year}
-          </p>
+          <h1>
+            {record.subject} {record.year} — {typeLabel}
+          </h1>
+          <p className="doc-subtitle">{seriesLabel}</p>
 
           {record.file ? (
             <>

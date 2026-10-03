@@ -164,7 +164,6 @@ a {
   padding: 0.5rem 0.75rem;
   text-decoration: none;
   font-size: 0.875rem;
-  font-weight: 500;
   color: var(--chrome-fg);
 }
 
@@ -238,6 +237,17 @@ h1 {
 
 h2 {
   font-size: 1.25rem;
+  font-weight: 600;
+}
+
+/* Only the 400 and 600 weights are loaded (see layout.tsx): anything the
+   browser would make bold (700) uses 600 instead of a faked bold. */
+strong,
+b,
+h3,
+h4,
+h5,
+h6 {
   font-weight: 600;
 }
 
@@ -490,7 +500,6 @@ button.button--gradient,
 }
 
 .list-row__label {
-  font-weight: 500;
   flex: 1 1 auto;
 }
 
@@ -851,7 +860,6 @@ th {
 }
 
 .paper-pager__label {
-  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -902,7 +910,6 @@ details.tech-details {
 details.tech-details summary {
   cursor: pointer;
   color: var(--color-muted);
-  font-weight: 500;
 }
 
 dl.meta-table {
@@ -975,6 +982,23 @@ dl.meta-table dd {
 
 .table-action svg {
   flex: 0 0 auto;
+}
+
+/* A results row's View / Open PDF actions, side by side. */
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* On touch screens every row action is a full 44 px target (the same
+   size as .button), with larger text. */
+@media (pointer: coarse) {
+  .table-action {
+    min-height: 2.75rem;
+    padding: 0.5rem 0.85rem;
+    font-size: 0.9375rem;
+  }
 }
 
 .form-actions {

@@ -214,7 +214,12 @@ export default async function HomePage() {
                       <td>
                         {/* Template literal again (see src/lib/format.ts) -- builds the
                             paper's address by dropping its fields into the URL text. */}
-                        <Link href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}>View</Link>
+                        <Link
+                          href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}
+                          className="table-action"
+                        >
+                          View
+                        </Link>
                       </td>
                     </tr>
                   );
