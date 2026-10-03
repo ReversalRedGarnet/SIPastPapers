@@ -770,11 +770,11 @@ The project owner should control the GitHub organization/repository, primary dom
   reachable within 30 s), and every `PAGE_PATHS_REFRESH_SECONDS` (default
   300) as a fallback. If the list can't be loaded, requests go through and
   the page answers its own 404 (now a real 404 status: the paper page no
-  longer streams a loading screen first). Link prefetches (and browser
-  prefetch/prerender) don't run the proxy at all -- otherwise a page view
-  was up to 25 proxy runs. Trade-off: a request that forges a prefetch
-  header for a made-up address skips the check, and that 404 is rendered
-  and stored once (visitors still get the proxy's uncached 404 there).
+  longer streams a loading screen first). The proxy runs on every
+  browse/paper request, prefetches included, so no header skips the check;
+  browser prefetches are judged from the list in memory only. Long lists
+  of links (results, recently added, browse lists, sidebar years) don't
+  prefetch, which keeps proxy runs to a few per page view.
 - **2026-10-03 — Year zips prebuilt in R2 instead of built live.** A
   live-built zip (20–40 MB) passed through a Vercel function on every
   download and was the largest remaining source of Fast Origin

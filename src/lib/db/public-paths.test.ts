@@ -164,7 +164,7 @@ test("the 300 s refresh still runs as a fallback: a withdrawn paper drops out of
 test("judging a prefetch from memory never loads the list", async () => {
   const { load, counter } = loader(BEFORE);
   const snapshot = createPagePathsSnapshot(load);
-  assert.equal(snapshot.judgeFromMemory(NEW_PAPER, 0), "unchecked", "no list yet: let it through");
+  assert.equal(snapshot.judgeFromMemory(NEW_PAPER, 0), "no list");
   assert.equal(counter.calls, 0);
 
   await snapshot.judge("/browse", 0);

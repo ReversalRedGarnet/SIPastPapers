@@ -149,8 +149,11 @@ export interface PagePathsSnapshot {
    * request through (fail open: the page itself still returns its own 404).
    */
   judge(pathname: string, now?: number): Promise<PathVerdict>;
-  /** The verdict from the list as it stands, with no database work at all ("unchecked" if there's none). */
-  judgeFromMemory(pathname: string, now?: number): PathVerdict;
+  /**
+   * The verdict from the list as it stands, with no database work at all;
+   * "no list" when there's no usable list in memory.
+   */
+  judgeFromMemory(pathname: string, now?: number): PathVerdict | "no list";
 }
 
 /**
@@ -182,9 +185,15 @@ export function createPagePathsSnapshot(
     return loading;
   }
 
-  function judgeFromMemory(pathname: string, now: number = Date.now()): PathVerdict {
-    if (!snapshot || now - snapshot.loadedAt > giveUpAfterMs()) return "unchecked";
+  function judgeFromMemory(pathname: string, now: number = Date.now()): PathVerdict | "no list" {
+    if (!snapshot || now - snapshot.loadedAt > giveUpAfterMs()) return "no list";
     return judgePath(snapshot.paths, pathname);
+  }
+
+  /** As judgeFromMemory, but with no list the request is let through. */
+  function judgeLoaded(pathname: string, now: number): PathVerdict {
+    const verdict = judgeFromMemory(pathname, now);
+    return verdict === "no list" ? "unchecked" : verdict;
   }
 
   async function judge(pathname: string, now: number = Date.now()): Promise<PathVerdict> {
@@ -198,7 +207,7 @@ export function createPagePathsSnapshot(
       void reload(now); // answer from the current list meanwhile
     }
 
-    const verdict = judgeFromMemory(pathname, now);
+    const verdict = judgeLoaded(pathname, now);
     if (verdict !== "missing") return verdict;
 
     // Not in the list -- perhaps published since it was loaded. Wait for a
@@ -210,7 +219,7 @@ export function createPagePathsSnapshot(
     } else {
       return verdict;
     }
-    return judgeFromMemory(pathname, now);
+    return judgeLoaded(pathname, now);
   }
 
   return { judge, judgeFromMemory };

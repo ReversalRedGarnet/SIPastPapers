@@ -1,18 +1,23 @@
 /**
- * True for a request the browser or Next.js sends ahead of time, in case the
- * visitor follows a link -- not a page someone has actually asked for:
+ * True for a request the browser sends ahead of time, in case the visitor
+ * follows a link -- not a page someone has actually asked for:
  *
- * - `Next-Router-Prefetch`: Next.js's <Link> prefetching a page;
  * - `Purpose: prefetch`: older browsers' link prefetching;
  * - `Sec-Purpose: prefetch...`: current browsers' prefetch and prerender
  *   (every value it can take starts with "prefetch").
  *
- * src/proxy.ts's matcher skips these same three headers, so the proxy
- * doesn't run for them at all; this is for the proxy's own check.
+ * The proxy judges these from the list of addresses already in memory,
+ * never loading it (src/lib/page-guard.ts).
+ *
+ * Next.js's own <Link> prefetches can't be told apart here: Next.js removes
+ * its router headers (RSC, Next-Router-Prefetch, ...) from the request
+ * before the proxy sees it (next/dist/server/web/adapter.js), so to the
+ * proxy they look like page views. That costs no database work for a real
+ * link once the list is in memory -- and the long lists of links on the
+ * site don't prefetch at all (prefetch={false}).
  */
 export function isPrefetchRequest(headers: Headers): boolean {
   return (
-    headers.has("next-router-prefetch") ||
     headers.get("purpose")?.toLowerCase() === "prefetch" ||
     (headers.get("sec-purpose")?.toLowerCase().includes("prefetch") ?? false)
   );
