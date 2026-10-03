@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadTestDatabaseEnv } from "./test-database-env";
 import { query, queryOne, withRolledBackTransaction, closePool } from "./client";
+import { createPagePathsSnapshot, loadPublicPagePaths } from "./public-paths";
 import { artifactSlug } from "@/lib/artifact-naming";
 import type { CoverageCell, FileRelocation } from "@/lib/db/queries";
 import type { StorageProvider } from "@/lib/storage";
@@ -905,5 +906,18 @@ test("search results have a stable order within a year and subject, so pages nev
     }
     assert.deepEqual(paged, all, "one-per-page listing matches the full listing exactly");
     assert.equal(new Set(paged).size, 3);
+  });
+});
+
+test("the proxy finds a freshly published paper on its first request, without waiting for the 5-minute refresh", async () => {
+  await withRolledBackTransaction(async () => {
+    // Generous waits: this is a test database, possibly slow to answer.
+    const snapshot = createPagePathsSnapshot(loadPublicPagePaths, { firstLoadWaitMs: 120_000, missReloadWaitMs: 120_000 });
+    const address = `/exams/sisc-l1/2099/mathematics/${artifactSlug({ artifactType: "question_paper", paperNo: "45" })}`;
+    assert.equal(await snapshot.judge("/browse", 0), "exists", "the list is loaded before the paper exists");
+    assert.equal(await snapshot.judge(address, 1_000), "missing");
+
+    await publishTestPaper("45");
+    assert.equal(await snapshot.judge(address, 31_000), "exists", "found once 30 s have passed since the last reload");
   });
 });

@@ -85,27 +85,44 @@ export function judgePath(paths: PublicPagePaths, pathname: string): PathVerdict
 
 // --- the snapshot the proxy uses -------------------------------------------
 //
-// Loaded from the database at most once per refresh interval per running
-// copy of the app, not on every request. A paper published (or withdrawn)
-// is picked up within about that interval; until then a withdrawn paper's
-// page answers for itself, and a newly published one gets a 404 (not
-// stored anywhere).
+// The list is held in memory by each running copy of the app and reloaded:
+//
+// - when an address isn't in it (a paper may have been published since it
+//   was loaded) -- but at most once per PAGE_PATHS_MIN_RELOAD_SECONDS
+//   (default 30), so a bot trying made-up addresses can't force a database
+//   query per request; a miss inside that gap is answered from the list as
+//   it stands;
+// - every PAGE_PATHS_REFRESH_SECONDS (default 300) in the background, as a
+//   fallback -- this is what drops a withdrawn paper (until then its page
+//   answers for itself).
 
 const DEFAULT_REFRESH_SECONDS = 300;
+const DEFAULT_MIN_RELOAD_SECONDS = 30;
+
+function secondsFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback * 1000;
+  const seconds = Number(raw);
+  if (Number.isInteger(seconds) && seconds > 0) return seconds * 1000;
+  console.warn(`[public-paths] ${name}="${raw}" isn't a whole number above 0 -- using ${fallback}.`);
+  return fallback * 1000;
+}
 
 /**
  * PAGE_PATHS_REFRESH_SECONDS (default 300): how often the list of real
- * addresses is reloaded. Read each time (it's cheap) so tests can change it.
+ * addresses is reloaded regardless. Read each time (it's cheap) so tests
+ * can change it.
  */
 export function refreshAfterMs(): number {
-  const raw = process.env.PAGE_PATHS_REFRESH_SECONDS;
-  if (raw === undefined || raw === "") return DEFAULT_REFRESH_SECONDS * 1000;
-  const seconds = Number(raw);
-  if (Number.isInteger(seconds) && seconds > 0) return seconds * 1000;
-  console.warn(
-    `[public-paths] PAGE_PATHS_REFRESH_SECONDS="${raw}" isn't a whole number above 0 -- using ${DEFAULT_REFRESH_SECONDS}.`
-  );
-  return DEFAULT_REFRESH_SECONDS * 1000;
+  return secondsFromEnv("PAGE_PATHS_REFRESH_SECONDS", DEFAULT_REFRESH_SECONDS);
+}
+
+/**
+ * PAGE_PATHS_MIN_RELOAD_SECONDS (default 30): the shortest gap between two
+ * reloads triggered by addresses that aren't in the list.
+ */
+export function minReloadGapMs(): number {
+  return secondsFromEnv("PAGE_PATHS_MIN_RELOAD_SECONDS", DEFAULT_MIN_RELOAD_SECONDS);
 }
 
 /** Past this, a snapshot that can't be refreshed is no longer trusted: two missed refreshes, and at least 10 minutes. */
@@ -114,35 +131,90 @@ function giveUpAfterMs(): number {
 }
 /** How long a request waits for the very first snapshot before going ahead without one. */
 const FIRST_LOAD_WAIT_MS = 1_500;
+/** How long a request for an address not in the list waits for the reload it triggered. */
+const MISS_RELOAD_WAIT_MS = 3_000;
 
-let snapshot: { paths: PublicPagePaths; loadedAt: number } | undefined;
-let loading: Promise<void> | undefined;
+function waitAtMost(promise: Promise<void>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
-function refresh(now: number): Promise<void> {
-  loading ??= loadPublicPagePaths()
-    .then((paths) => {
-      snapshot = { paths, loadedAt: now };
-    })
-    .catch((err) => {
-      console.error(`[public-paths] couldn't load page addresses: ${err instanceof Error ? err.message : err}`);
-    })
-    .finally(() => {
-      loading = undefined;
-    });
-  return loading;
+export interface PagePathsSnapshot {
+  /**
+   * The verdict on an address, reloading the list first if needed (see
+   * above). "unchecked" when there's no usable list -- the caller lets the
+   * request through (fail open: the page itself still returns its own 404).
+   */
+  judge(pathname: string, now?: number): Promise<PathVerdict>;
+  /** The verdict from the list as it stands, with no database work at all ("unchecked" if there's none). */
+  judgeFromMemory(pathname: string, now?: number): PathVerdict;
 }
 
 /**
- * The current snapshot, or undefined if there isn't a usable one -- in which
- * case the caller should let the request through (fail open: the page
- * itself still returns its own 404).
+ * `load` is loadPublicPagePaths in the app; tests pass their own, and may
+ * wait longer for a slow test database.
  */
-export async function getPublicPagePaths(now: number = Date.now()): Promise<PublicPagePaths | undefined> {
-  if (!snapshot) {
-    await Promise.race([refresh(now), new Promise((resolve) => setTimeout(resolve, FIRST_LOAD_WAIT_MS))]);
-  } else if (now - snapshot.loadedAt > refreshAfterMs()) {
-    void refresh(now); // answer from the current snapshot meanwhile
+export function createPagePathsSnapshot(
+  load: () => Promise<PublicPagePaths>,
+  { firstLoadWaitMs = FIRST_LOAD_WAIT_MS, missReloadWaitMs = MISS_RELOAD_WAIT_MS } = {}
+): PagePathsSnapshot {
+  let snapshot: { paths: PublicPagePaths; loadedAt: number } | undefined;
+  let loading: Promise<void> | undefined;
+  let lastLoadStartedAt = -Infinity;
+
+  function reload(now: number): Promise<void> {
+    if (!loading) {
+      lastLoadStartedAt = now;
+      loading = load()
+        .then((paths) => {
+          snapshot = { paths, loadedAt: now };
+        })
+        .catch((err) => {
+          console.error(`[public-paths] couldn't load page addresses: ${err instanceof Error ? err.message : err}`);
+        })
+        .finally(() => {
+          loading = undefined;
+        });
+    }
+    return loading;
   }
-  if (!snapshot || now - snapshot.loadedAt > giveUpAfterMs()) return undefined;
-  return snapshot.paths;
+
+  function judgeFromMemory(pathname: string, now: number = Date.now()): PathVerdict {
+    if (!snapshot || now - snapshot.loadedAt > giveUpAfterMs()) return "unchecked";
+    return judgePath(snapshot.paths, pathname);
+  }
+
+  async function judge(pathname: string, now: number = Date.now()): Promise<PathVerdict> {
+    if (!snapshot) {
+      // The same minimum gap applies while there's no list yet (the first
+      // load failed), so an unreachable database isn't retried per request.
+      if (loading || now - lastLoadStartedAt >= minReloadGapMs()) {
+        await waitAtMost(reload(now), firstLoadWaitMs);
+      }
+    } else if (now - snapshot.loadedAt > refreshAfterMs()) {
+      void reload(now); // answer from the current list meanwhile
+    }
+
+    const verdict = judgeFromMemory(pathname, now);
+    if (verdict !== "missing") return verdict;
+
+    // Not in the list -- perhaps published since it was loaded. Wait for a
+    // reload already under way, or start one if the last was long enough ago.
+    if (loading) {
+      await waitAtMost(loading, missReloadWaitMs);
+    } else if (now - lastLoadStartedAt >= minReloadGapMs()) {
+      await waitAtMost(reload(now), missReloadWaitMs);
+    } else {
+      return verdict;
+    }
+    return judgeFromMemory(pathname, now);
+  }
+
+  return { judge, judgeFromMemory };
 }
+
+/** The one list each running copy of the app shares. */
+export const publicPagePaths = createPagePathsSnapshot(loadPublicPagePaths);

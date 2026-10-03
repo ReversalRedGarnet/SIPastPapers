@@ -188,7 +188,8 @@ token with **read-only** object access. The token that can write
 | `RATE_LIMIT_SECRET` | Recommended | Any long random string; without it each running copy signs visitor cookies with its own key. |
 | `NEXT_PUBLIC_SITE_URL` | Optional | Defaults to `https://www.sipastexams.com` (the bare domain only redirects there). |
 | `RATE_LIMIT_*` overrides | Optional | See `.env.example`. |
-| `PAGE_PATHS_REFRESH_SECONDS` | Optional | How often `src/proxy.ts` reloads the list of real page addresses (default 300). |
+| `PAGE_PATHS_MIN_RELOAD_SECONDS` | Optional | `src/proxy.ts` reloads its list of real page addresses when asked for one not in it, at most this often (default 30): a newly published paper is reachable within 30 s. |
+| `PAGE_PATHS_REFRESH_SECONDS` | Optional | The proxy also reloads the list this often regardless (default 300); this is what drops a withdrawn paper's address. |
 | `DATABASE_URL` | CLI only | Direct connection, for `npm run db:migrate`. |
 | `DB_POOL_PROFILE`, `SIPASTPAPERS_STORAGE_ROOT` | CLI / local only | |
 

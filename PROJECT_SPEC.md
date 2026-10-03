@@ -754,12 +754,18 @@ The project owner should control the GitHub organization/repository, primary dom
   the usage). Now only 40 pages are pre-built; the rest are built and
   stored when first visited. Because Next.js also stores a page that
   turns out not to exist, `src/proxy.ts` checks browse and paper
-  addresses against the real ones (loaded from the database at most once every
-  `PAGE_PATHS_REFRESH_SECONDS`, default 300) and answers made-up ones with a real, uncached 404. If that
-  list can't be loaded, requests go through and the page answers its own
-  404 (now a real 404 status: the paper page no longer streams a loading
-  screen first). Trade-off: the proxy runs on every browse/paper
-  request, including cached ones.
+  addresses against the real ones and answers made-up ones with a real,
+  uncached 404. The list is held in memory and reloaded when an address
+  isn't in it, at most once per `PAGE_PATHS_MIN_RELOAD_SECONDS` (default
+  30, so a bot can't force a query per request and a new paper is
+  reachable within 30 s), and every `PAGE_PATHS_REFRESH_SECONDS` (default
+  300) as a fallback. If the list can't be loaded, requests go through and
+  the page answers its own 404 (now a real 404 status: the paper page no
+  longer streams a loading screen first). Link prefetches (and browser
+  prefetch/prerender) don't run the proxy at all -- otherwise a page view
+  was up to 25 proxy runs. Trade-off: a request that forges a prefetch
+  header for a made-up address skips the check, and that 404 is rendered
+  and stored once (visitors still get the proxy's uncached 404 there).
 - **2026-10-03 — Year zips prebuilt in R2 instead of built live.** A
   live-built zip (20–40 MB) passed through a Vercel function on every
   download and was the largest remaining source of Fast Origin
