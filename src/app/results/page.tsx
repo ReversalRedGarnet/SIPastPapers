@@ -229,6 +229,10 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                   const typeLabel = variant
                     ? `${artifactTypeLabel(r.artifactType)} (${variant})`
                     : artifactTypeLabel(r.artifactType);
+                  // Every row has a "View" and an "Open PDF": the hidden
+                  // text names the paper, so a screen reader's list of
+                  // links tells them apart.
+                  const paperName = `${r.subject} ${r.year} ${typeLabel}, ${seriesDisplayLabel(r.examSeriesCode)}`;
                   return (
                     <tr key={r.id}>
                       <td data-label="Year">{r.year}</td>
@@ -237,12 +241,14 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                       <td data-label="Exam level">{seriesDisplayLabel(r.examSeriesCode)}</td>
                       <td>
                         <div className="row-actions">
-                          <Link href={href} className="table-action">
-                            View
+                          {/* No prefetching: a page of results is up to 25 of these. */}
+                          <Link href={href} className="table-action" prefetch={false}>
+                            View<span className="visually-hidden"> {paperName}</span>
                           </Link>
                           {r.file && (
                             <a href={`/api/files/${r.file.id}`} className="table-action">
                               Open PDF ({formatBytes(r.file.bytes)})
+                              <span className="visually-hidden"> {paperName}</span>
                             </a>
                           )}
                         </div>

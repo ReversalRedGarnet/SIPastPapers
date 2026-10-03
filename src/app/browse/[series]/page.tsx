@@ -110,7 +110,7 @@ export default async function SeriesPage({ params }: SeriesPageProps) {
         <ul className="list-rows">
           {years.map((y) => (
             <li key={y}>
-              <Link href={`/browse/${seriesCode}/${y}`} className="list-row">
+              <Link href={`/browse/${seriesCode}/${y}`} className="list-row" prefetch={false}>
                 <span className="list-row__label">{y}</span>
                 {!isEmpty && emptyYears.has(y) && <Badge tone="neutral">No papers yet</Badge>}
                 <span className="list-row__chevron" aria-hidden="true">

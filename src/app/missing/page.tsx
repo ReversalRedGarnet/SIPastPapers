@@ -106,10 +106,12 @@ export default async function MissingPapersPage() {
                         <a
                           className="table-action"
                           href={mailtoHref(row)}
-                          aria-label={`Send us ${row.subjectName} ${row.year} (${seriesDisplayLabel(row.examSeriesCode)})`}
                         >
                           <MailIcon />
+                          {/* The accessible name starts with the visible words, so
+                              "click Send it" works with voice control. */}
                           Send it
+                          <span className="visually-hidden">{`: ${row.subjectName} ${row.year} (${seriesDisplayLabel(row.examSeriesCode)})`}</span>
                         </a>
                       </td>
                     </tr>

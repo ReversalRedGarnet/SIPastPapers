@@ -217,8 +217,14 @@ export default async function HomePage() {
                         <Link
                           href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}
                           className="table-action"
+                          prefetch={false}
                         >
                           View
+                          {/* Names the paper for screen readers: every row has a "View". */}
+                          <span className="visually-hidden">
+                            {" "}
+                            {r.subject} {r.year} {typeLabel}, {seriesDisplayLabel(r.examSeriesCode)}
+                          </span>
                         </Link>
                       </td>
                     </tr>

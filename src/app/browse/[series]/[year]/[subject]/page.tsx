@@ -107,7 +107,7 @@ export default async function SubjectPage({ params }: SubjectPageProps) {
               const label = artifactListLabel(paper.artifactType, paper.paperNumber);
               return (
                 <li key={paper.id}>
-                  <Link href={href} className="list-row">
+                  <Link href={href} className="list-row" prefetch={false}>
                     <span className="list-row__label">{label}</span>
                     {!paper.file && <Badge tone={statusTone(paper.status)}>{statusLabel(paper.status)}</Badge>}
                     <span className="list-row__chevron" aria-hidden="true">

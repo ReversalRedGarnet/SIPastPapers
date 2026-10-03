@@ -118,7 +118,7 @@ export default async function YearPage({ params }: YearPageProps) {
           <ul className="list-rows">
             {subjects.map((subject) => (
               <li key={subject.slug}>
-                <Link href={`/browse/${seriesCode}/${year}/${subject.slug}`} className="list-row">
+                <Link href={`/browse/${seriesCode}/${year}/${subject.slug}`} className="list-row" prefetch={false}>
                   <span className="list-row__label">{subject.name}</span>
                   <span className="list-row__meta">
                     {subject.count} {subject.count === 1 ? "paper" : "papers"}
