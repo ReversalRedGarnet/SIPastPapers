@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { Pool, type PoolClient, type QueryResultRow } from "pg";
+import { Client, Pool, type ClientBase, type QueryResultRow } from "pg";
 import { isTransientConnectionError } from "./transient-error";
 
 // `Pool | undefined` -- a union again (see src/types/domain.ts), this time
@@ -131,7 +131,7 @@ function getPool(): Pool {
  * That's what lets different functions call query() and withTransaction()
  * independently while still working correctly together.
  */
-const activeClient = new AsyncLocalStorage<PoolClient>();
+const activeClient = new AsyncLocalStorage<ClientBase>();
 
 // `<T extends QueryResultRow = QueryResultRow>` builds on the generic idea
 // above: `extends QueryResultRow` restricts `T` to only ever be filled in
@@ -215,6 +215,26 @@ export async function withTransaction<T>(fn: () => Promise<T>): Promise<T> {
     throw err;
   } finally {
     client.release();
+  }
+}
+
+/**
+ * Runs the given function with every query()/queryOne() inside it on one
+ * connection of its own -- opened with the given connect timeout, tried
+ * once (no retry), and closed afterwards -- instead of the shared pool and
+ * its "web" retry budget. Used only by the proxy's list of page addresses
+ * (src/lib/db/public-paths.ts), which would rather fail fast and let the
+ * request through than make it wait. Inside a transaction (a test), it
+ * just runs on that transaction's connection.
+ */
+export async function withOwnConnection<T>(connectionTimeoutMillis: number, fn: () => Promise<T>): Promise<T> {
+  if (activeClient.getStore()) return fn();
+  const client = new Client({ connectionString: resolveConnectionString(), connectionTimeoutMillis });
+  await client.connect();
+  try {
+    return await activeClient.run(client, fn);
+  } finally {
+    await client.end().catch(() => {});
   }
 }
 

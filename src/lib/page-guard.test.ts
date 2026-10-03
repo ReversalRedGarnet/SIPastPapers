@@ -89,3 +89,23 @@ test("a real address is let through to the page, prefetch or not", async () => {
 test("the proxy runs on every browse and paper request: no header lets a request skip it", () => {
   assert.deepEqual(config.matcher, ["/browse/:path*", "/exams/:path*"]);
 });
+
+test("a load of the list still under way when the answer goes out is handed to waitUntil", async (t) => {
+  t.mock.method(console, "log", () => {});
+  let finish!: () => void;
+  const snapshot = createPagePathsSnapshot(
+    () => new Promise<PublicPagePaths>((resolve) => (finish = () => resolve(PATHS))),
+    { firstLoadWaitMs: 0 }
+  );
+  const handedOver: Promise<unknown>[] = [];
+  const response = await guardPageRequest(request(REAL_PAPER), snapshot, (p) => handedOver.push(p));
+  assert.equal(rendersPage(response), true, "let through without waiting for the list");
+  assert.equal(handedOver.length, 1);
+  finish();
+  await handedOver[0];
+  assert.equal(snapshot.judgeFromMemory(REAL_PAPER), "exists", "the load finished after the response");
+
+  handedOver.length = 0;
+  await guardPageRequest(request(REAL_PAPER), snapshot, (p) => handedOver.push(p));
+  assert.equal(handedOver.length, 0, "nothing to hand over once the list is loaded");
+});

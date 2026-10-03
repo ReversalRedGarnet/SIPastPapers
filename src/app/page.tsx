@@ -6,6 +6,7 @@ import Link from "next/link";
 import { getCoverageMatrix, listExamSeries, listRecentPublicArtifacts, listSubjects, listYears } from "@/lib/db/queries";
 import { artifactTypeLabel, paperVariantLabel } from "@/lib/artifact-naming";
 import { seriesDisplayLabel } from "@/lib/format";
+import { paperPath } from "@/lib/page-links";
 import { deriveMissingPaperRows } from "@/lib/missing-papers";
 
 // The list of papers only changes when the operator publishes or
@@ -212,10 +213,8 @@ export default async function HomePage() {
                       <td data-label="Type">{typeLabel}</td>
                       <td data-label="Exam level">{seriesDisplayLabel(r.examSeriesCode)}</td>
                       <td>
-                        {/* Template literal again (see src/lib/format.ts) -- builds the
-                            paper's address by dropping its fields into the URL text. */}
                         <Link
-                          href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}
+                          href={paperPath(r)}
                           className="table-action"
                           prefetch={false}
                         >

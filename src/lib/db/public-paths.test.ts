@@ -187,3 +187,54 @@ test("while the list can't be loaded, requests go through and the database is re
   assert.equal(await snapshot.judge(NEW_PAPER, 30 * SECOND), "unchecked");
   assert.equal(calls, 2);
 });
+
+test("each load writes one log line: whether it worked, how long it took, what started it, and how many tries in a row", async (t) => {
+  const lines: Record<string, unknown>[] = [];
+  const capture = (line: string) => lines.push(JSON.parse(line));
+  t.mock.method(console, "log", capture);
+  t.mock.method(console, "error", capture);
+  let fail = false;
+  const snapshot = createPagePathsSnapshot(async () => {
+    if (fail) throw new Error("database unreachable");
+    return PATHS;
+  });
+
+  await snapshot.judge(OLD_PAPER, 0); // no list yet
+  await snapshot.judge(NEW_PAPER, 60 * SECOND); // not in the list
+  fail = true;
+  await snapshot.judge(NEW_PAPER, 120 * SECOND); // not in the list, and the load fails
+  await snapshot.judge(OLD_PAPER, 400 * SECOND); // due the 300 s refresh, fails again
+  await snapshot.pending();
+  fail = false;
+  await snapshot.judge(NEW_PAPER, 500 * SECOND); // the list (from 60 s) is due its refresh again
+
+  assert.deepEqual(
+    lines.map(({ evt, ok, attempt, trigger, region }) => ({ evt, ok, attempt, trigger, region })),
+    [
+      { evt: "paths_load", ok: true, attempt: 1, trigger: "cold", region: process.env.VERCEL_REGION ?? null },
+      { evt: "paths_load", ok: true, attempt: 1, trigger: "miss", region: process.env.VERCEL_REGION ?? null },
+      { evt: "paths_load", ok: false, attempt: 1, trigger: "miss", region: process.env.VERCEL_REGION ?? null },
+      { evt: "paths_load", ok: false, attempt: 2, trigger: "periodic", region: process.env.VERCEL_REGION ?? null },
+      { evt: "paths_load", ok: true, attempt: 3, trigger: "periodic", region: process.env.VERCEL_REGION ?? null },
+    ]
+  );
+  assert.ok(lines.every((l) => typeof l.ms === "number"));
+  assert.equal(lines[2].error, "database unreachable");
+});
+
+test("a load still under way is reported as pending until it finishes", async (t) => {
+  t.mock.method(console, "log", () => {});
+  let finish!: () => void;
+  const snapshot = createPagePathsSnapshot(
+    () => new Promise<PublicPagePaths>((resolve) => (finish = () => resolve(PATHS))),
+    { firstLoadWaitMs: 0 }
+  );
+  assert.equal(snapshot.pending(), undefined);
+  assert.equal(await snapshot.judge(OLD_PAPER, 0), "unchecked", "let through while the first load is still going");
+  const pending = snapshot.pending();
+  assert.ok(pending);
+  finish();
+  await pending;
+  assert.equal(snapshot.pending(), undefined);
+  assert.equal(snapshot.judgeFromMemory(OLD_PAPER, 0), "exists");
+});

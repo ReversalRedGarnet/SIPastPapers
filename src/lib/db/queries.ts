@@ -8,6 +8,7 @@ import {
   PUBLICLY_VISIBLE,
   QUARANTINE_PREFIX,
   SERVABLE,
+  SUBJECT_SLUG,
 } from "./visibility";
 export { QUARANTINE_PREFIX } from "./visibility";
 import { listBrowseYears } from "@/lib/browse-years";
@@ -22,6 +23,7 @@ import {
 import { pdfServingHeaders } from "@/lib/storage/serving-headers";
 import { deleteYearZips } from "@/lib/year-zip";
 import { parseSearchQuery } from "@/lib/search-query";
+import { paperPath } from "@/lib/page-links";
 import type {
   ArtifactStatus,
   ArtifactType,
@@ -68,7 +70,7 @@ interface ArtifactBaseRow {
   series_code: string;
   series_name: string;
   subject_name: string;
-  subject_slug: string | null;
+  subject_slug: string;
 }
 
 interface RightsRow {
@@ -136,7 +138,7 @@ const ARTIFACT_BASE_SELECT = `
     a.status, a.published_at,
     ei.year as year,
     es.code as series_code, es.name as series_name,
-    s.canonical_name as subject_name, s.subject_code as subject_slug
+    s.canonical_name as subject_name, ${SUBJECT_SLUG} as subject_slug
   from artifacts a
   join exam_instances ei on ei.id = a.exam_instance_id
   join exam_series es on es.id = ei.exam_series_id
@@ -157,7 +159,7 @@ const PUBLIC_ARTIFACT_SELECT = `
     a.status, a.published_at,
     ei.year as year,
     es.code as series_code, es.name as series_name,
-    s.canonical_name as subject_name, s.subject_code as subject_slug,
+    s.canonical_name as subject_name, ${SUBJECT_SLUG} as subject_slug,
     f.id as file_id, f.sha256 as file_sha256, f.mime as file_mime,
     f.bytes as file_bytes,
     src.source_type as source_type, src.organization as source_organization,
@@ -216,7 +218,7 @@ function hydratePublicRecord(row: PublicArtifactRow): PublicExamRecord {
     slug: artifactSlug({ artifactType: row.type, paperNo: row.paper_no }),
     examSeriesCode: row.series_code,
     examSeriesName: row.series_name,
-    subjectSlug: row.subject_slug ?? "",
+    subjectSlug: row.subject_slug,
     subject: row.subject_name,
     year: row.year,
     artifactType: row.type,
@@ -378,7 +380,7 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
   }
   if (filters.subject) {
     params.push(filters.subject);
-    clauses.push(`s.subject_code = $${params.length}`);
+    clauses.push(`${SUBJECT_SLUG} = $${params.length}`);
   }
   // `?.` ("optional chaining") means "only call .trim() if filters.q
   // actually has a value; if it's missing, just skip straight to
@@ -542,8 +544,8 @@ export const listPublicSubjectsForInstance = cache(async (
   seriesCode: string,
   year: number
 ): Promise<SubjectWithCount[]> => {
-  const rows = await query<{ slug: string | null; name: string; count: string }>(
-    `select s.subject_code as slug, s.canonical_name as name, count(*) as count
+  const rows = await query<{ slug: string; name: string; count: string }>(
+    `select ${SUBJECT_SLUG} as slug, s.canonical_name as name, count(*) as count
      from artifacts a
      join exam_instances ei on ei.id = a.exam_instance_id
      join exam_series es on es.id = ei.exam_series_id
@@ -553,7 +555,7 @@ export const listPublicSubjectsForInstance = cache(async (
      order by s.canonical_name`,
     [seriesCode, year]
   );
-  return rows.map((r) => ({ slug: r.slug ?? "", name: r.name, count: Number(r.count) }));
+  return rows.map((r) => ({ slug: r.slug, name: r.name, count: Number(r.count) }));
 });
 
 export interface DownloadableYearFile {
@@ -634,7 +636,7 @@ export const getPublicArtifactBySlug = cache(async (
 ): Promise<{ record: PublicExamRecord; related: PublicExamRecord[] } | undefined> => {
   const rows = await query<PublicArtifactRow>(
     `${PUBLIC_ARTIFACT_SELECT}
-     where ${PUBLICLY_VISIBLE} and es.code = $1 and ei.year = $2 and s.subject_code = $3`,
+     where ${PUBLICLY_VISIBLE} and es.code = $1 and ei.year = $2 and ${SUBJECT_SLUG} = $3`,
     [seriesCode, year, subjectSlug]
   );
 
@@ -662,7 +664,7 @@ export const listSubjectArtifacts = cache(async (
 ): Promise<PublicExamRecord[]> => {
   const rows = await query<PublicArtifactRow>(
     `${PUBLIC_ARTIFACT_SELECT}
-     where ${PUBLICLY_VISIBLE} and es.code = $1 and s.subject_code = $2
+     where ${PUBLICLY_VISIBLE} and es.code = $1 and ${SUBJECT_SLUG} = $2
      order by ei.year asc, a.type asc, a.paper_no asc nulls first`,
     [seriesCode, subjectSlug]
   );
@@ -1099,8 +1101,8 @@ export async function getFileForDownload(fileId: string): Promise<DownloadableFi
  * report is about a real, public paper, and to send the visitor back to it.
  */
 export async function getPublicArtifactPath(artifactId: string): Promise<string | undefined> {
-  const row = await queryOne<{ type: ArtifactType; paper_no: string | null; year: number; series_code: string; subject_slug: string | null }>(
-    `select a.type, a.paper_no, ei.year, es.code as series_code, s.subject_code as subject_slug
+  const row = await queryOne<{ type: ArtifactType; paper_no: string | null; year: number; series_code: string; subject_slug: string }>(
+    `select a.type, a.paper_no, ei.year, es.code as series_code, ${SUBJECT_SLUG} as subject_slug
      from artifacts a
      join exam_instances ei on ei.id = a.exam_instance_id
      join exam_series es on es.id = ei.exam_series_id
@@ -1110,7 +1112,7 @@ export async function getPublicArtifactPath(artifactId: string): Promise<string 
   );
   if (!row) return undefined;
   const slug = artifactSlug({ artifactType: row.type, paperNo: row.paper_no });
-  return `/exams/${row.series_code}/${row.year}/${row.subject_slug ?? ""}/${slug}`;
+  return paperPath({ examSeriesCode: row.series_code, year: row.year, subjectSlug: row.subject_slug, slug });
 }
 
 export async function createIssue(input: {

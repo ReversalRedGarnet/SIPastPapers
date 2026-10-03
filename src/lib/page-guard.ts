@@ -20,10 +20,20 @@ import { isPrefetchRequest } from "@/lib/prefetch";
  *
  * Next.js's own link prefetches reach the proxy looking like page views
  * (see src/lib/prefetch.ts), and are judged as such.
+ *
+ * A load of the list still under way when the answer is ready (the request
+ * only waits so long for it) is handed to `waitUntil`, so it can finish
+ * after the response has gone out.
  */
-export async function guardPageRequest(request: NextRequest, paths: PagePathsSnapshot): Promise<NextResponse> {
+export async function guardPageRequest(
+  request: NextRequest,
+  paths: PagePathsSnapshot,
+  waitUntil: (promise: Promise<unknown>) => void = () => {}
+): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
   const verdict = isPrefetchRequest(request.headers) ? paths.judgeFromMemory(pathname) : await paths.judge(pathname);
+  const pending = paths.pending();
+  if (pending) waitUntil(pending);
 
   if (verdict === "missing") {
     // An address with no route behind it: Next.js answers it with the

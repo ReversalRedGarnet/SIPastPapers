@@ -1,4 +1,4 @@
-import type { NextRequest } from "next/server";
+import type { NextFetchEvent, NextRequest } from "next/server";
 import { publicPagePaths } from "@/lib/db/public-paths";
 import { guardPageRequest } from "@/lib/page-guard";
 
@@ -12,9 +12,14 @@ import { guardPageRequest } from "@/lib/page-guard";
  *
  * If the list of real addresses can't be loaded, page views are let
  * through and the pages answer for themselves, as before.
+ *
+ * On Vercel the proxy runs in the region nearest the visitor (not the
+ * functions' syd1), and an idle copy may be frozen once its response has
+ * gone out -- so a load of the list that outlasts the request is passed to
+ * waitUntil to keep it alive until it finishes.
  */
-export function proxy(request: NextRequest) {
-  return guardPageRequest(request, publicPagePaths);
+export function proxy(request: NextRequest, event: NextFetchEvent) {
+  return guardPageRequest(request, publicPagePaths, (promise) => event.waitUntil(promise));
 }
 
 // Every browse and paper request, prefetches included: a prefetch header

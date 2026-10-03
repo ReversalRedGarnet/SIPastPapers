@@ -10,7 +10,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { withRetry } from "./client";
+import { createServer, type Socket } from "node:net";
+import { withOwnConnection, withRetry } from "./client";
 import { isTransientConnectionError } from "./transient-error";
 
 delete process.env.DB_POOL_PROFILE;
@@ -61,4 +62,37 @@ test("the web profile stops after 2 total attempts even if the error keeps recur
     })
   );
   assert.equal(calls, 2, "web profile allows only 2 total attempts (the original try plus 1 retry)");
+});
+
+test("withOwnConnection gives up after its own connect timeout, with a single attempt and no retry", async () => {
+  // A server that accepts connections but never answers: the connect
+  // timeout has to fire.
+  let connections = 0;
+  const sockets: Socket[] = [];
+  const server = createServer((socket) => {
+    connections++;
+    sockets.push(socket);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  const saved = process.env.DATABASE_URL_POOLED;
+  process.env.DATABASE_URL_POOLED = `postgresql://user:pass@127.0.0.1:${port}/db`;
+  try {
+    const startedAt = Date.now();
+    let ran = false;
+    await assert.rejects(
+      withOwnConnection(300, async () => {
+        ran = true;
+      })
+    );
+    const elapsed = Date.now() - startedAt;
+    assert.equal(ran, false);
+    assert.equal(connections, 1, "one attempt, no retry");
+    assert.ok(elapsed >= 250 && elapsed < 2_000, `gave up after ${elapsed} ms`);
+  } finally {
+    if (saved === undefined) delete process.env.DATABASE_URL_POOLED;
+    else process.env.DATABASE_URL_POOLED = saved;
+    sockets.forEach((socket) => socket.destroy());
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

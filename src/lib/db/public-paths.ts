@@ -1,5 +1,5 @@
-import { query } from "./client";
-import { PUBLICLY_VISIBLE } from "./visibility";
+import { query, withOwnConnection } from "./client";
+import { PUBLICLY_VISIBLE, SUBJECT_SLUG } from "./visibility";
 import { artifactSlug } from "@/lib/artifact-naming";
 import { listBrowseYears } from "@/lib/browse-years";
 import type { ArtifactType } from "@/types/domain";
@@ -22,29 +22,45 @@ export interface PublicPagePaths {
   paperPaths: Set<string>;
 }
 
-export async function loadPublicPagePaths(): Promise<PublicPagePaths> {
-  const [series, subjects, papers] = await Promise.all([
-    query<{ code: string }>("select code from exam_series"),
-    // The same slug the browse pages match on: subject_code, or the id
-    // when a subject has no code.
-    query<{ slug: string }>("select coalesce(subject_code, id::text) as slug from subjects"),
-    query<{ code: string; year: number; subject_code: string | null; type: ArtifactType; paper_no: string | null }>(
-      `select es.code, ei.year, s.subject_code, a.type, a.paper_no
+/**
+ * The connect timeout for loading the list: one attempt, no retry. A slow
+ * or failed load only means requests are let through unchecked meanwhile
+ * (and it's tried again at most every PAGE_PATHS_MIN_RELOAD_SECONDS), so
+ * there's no point waiting out the 9 s x 2 that page queries allow.
+ */
+const LOAD_CONNECT_TIMEOUT_MS = 3_000;
+
+export function loadPublicPagePaths(): Promise<PublicPagePaths> {
+  // One after another on one connection: a connection runs one query at a
+  // time anyway.
+  return withOwnConnection(LOAD_CONNECT_TIMEOUT_MS, async () => {
+    const series = await query<{ code: string }>("select code from exam_series");
+    // The same slug every page links with: subject_code, or the id when a
+    // subject has no code.
+    const subjects = await query<{ slug: string }>(`select ${SUBJECT_SLUG} as slug from subjects s`);
+    const papers = await query<{ code: string; year: number; subject_slug: string; type: ArtifactType; paper_no: string | null }>(
+      `select es.code, ei.year, ${SUBJECT_SLUG} as subject_slug, a.type, a.paper_no
        from artifacts a
        join exam_instances ei on ei.id = a.exam_instance_id
        join exam_series es on es.id = ei.exam_series_id
        join subjects s on s.id = a.subject_id
        where ${PUBLICLY_VISIBLE}`
-    ),
-  ]);
+    );
+    return toPublicPagePaths(series, subjects, papers);
+  });
+}
+
+function toPublicPagePaths(
+  series: { code: string }[],
+  subjects: { slug: string }[],
+  papers: { code: string; year: number; subject_slug: string; type: ArtifactType; paper_no: string | null }[]
+): PublicPagePaths {
   return {
     seriesCodes: new Set(series.map((r) => r.code)),
     years: new Set(listBrowseYears()),
     subjectSlugs: new Set(subjects.map((r) => r.slug)),
     paperPaths: new Set(
-      papers
-        .filter((p) => p.subject_code)
-        .map((p) => `${p.code}/${p.year}/${p.subject_code}/${artifactSlug({ artifactType: p.type, paperNo: p.paper_no })}`)
+      papers.map((p) => `${p.code}/${p.year}/${p.subject_slug}/${artifactSlug({ artifactType: p.type, paperNo: p.paper_no })}`)
     ),
   };
 }
@@ -95,6 +111,8 @@ export function judgePath(paths: PublicPagePaths, pathname: string): PathVerdict
 // - every PAGE_PATHS_REFRESH_SECONDS (default 300) in the background, as a
 //   fallback -- this is what drops a withdrawn paper (until then its page
 //   answers for itself).
+//
+// Each load writes one line of JSON to the log (see logLoad below).
 
 const DEFAULT_REFRESH_SECONDS = 300;
 const DEFAULT_MIN_RELOAD_SECONDS = 30;
@@ -154,6 +172,30 @@ export interface PagePathsSnapshot {
    * "no list" when there's no usable list in memory.
    */
   judgeFromMemory(pathname: string, now?: number): PathVerdict | "no list";
+  /**
+   * The load under way, if any -- which may outlast the request that
+   * started it. src/proxy.ts hands it to waitUntil, so the hosting platform
+   * doesn't freeze the app mid-load once the response has gone out.
+   */
+  pending(): Promise<void> | undefined;
+}
+
+/** What started a load: no list yet, an address not in the list, or the 300 s refresh. */
+type LoadTrigger = "cold" | "miss" | "periodic";
+
+/**
+ * One line per load, e.g.
+ *
+ *   {"evt":"paths_load","ok":true,"ms":412,"attempt":1,"trigger":"miss","region":"sfo1"}
+ *
+ * `attempt` counts loads since the last one that worked (1 when the one
+ * before it worked), so a database that stays unreachable shows as 2, 3, ...
+ * A failed load adds `error` and is logged as an error.
+ */
+function logLoad(fields: { ok: boolean; ms: number; attempt: number; trigger: LoadTrigger; error?: string }): void {
+  const line = JSON.stringify({ evt: "paths_load", ...fields, region: process.env.VERCEL_REGION ?? null });
+  if (fields.ok) console.log(line);
+  else console.error(line);
 }
 
 /**
@@ -167,16 +209,23 @@ export function createPagePathsSnapshot(
   let snapshot: { paths: PublicPagePaths; loadedAt: number } | undefined;
   let loading: Promise<void> | undefined;
   let lastLoadStartedAt = -Infinity;
+  let failuresInARow = 0;
 
-  function reload(now: number): Promise<void> {
+  function reload(now: number, trigger: LoadTrigger): Promise<void> {
     if (!loading) {
       lastLoadStartedAt = now;
+      const attempt = failuresInARow + 1;
+      const startedAt = performance.now();
+      const ms = () => Math.round(performance.now() - startedAt);
       loading = load()
         .then((paths) => {
           snapshot = { paths, loadedAt: now };
+          failuresInARow = 0;
+          logLoad({ ok: true, ms: ms(), attempt, trigger });
         })
         .catch((err) => {
-          console.error(`[public-paths] couldn't load page addresses: ${err instanceof Error ? err.message : err}`);
+          failuresInARow++;
+          logLoad({ ok: false, ms: ms(), attempt, trigger, error: err instanceof Error ? err.message : String(err) });
         })
         .finally(() => {
           loading = undefined;
@@ -201,10 +250,10 @@ export function createPagePathsSnapshot(
       // The same minimum gap applies while there's no list yet (the first
       // load failed), so an unreachable database isn't retried per request.
       if (loading || now - lastLoadStartedAt >= minReloadGapMs()) {
-        await waitAtMost(reload(now), firstLoadWaitMs);
+        await waitAtMost(reload(now, "cold"), firstLoadWaitMs);
       }
     } else if (now - snapshot.loadedAt > refreshAfterMs()) {
-      void reload(now); // answer from the current list meanwhile
+      void reload(now, "periodic"); // answer from the current list meanwhile
     }
 
     const verdict = judgeLoaded(pathname, now);
@@ -215,14 +264,14 @@ export function createPagePathsSnapshot(
     if (loading) {
       await waitAtMost(loading, missReloadWaitMs);
     } else if (now - lastLoadStartedAt >= minReloadGapMs()) {
-      await waitAtMost(reload(now), missReloadWaitMs);
+      await waitAtMost(reload(now, "miss"), missReloadWaitMs);
     } else {
       return verdict;
     }
     return judgeLoaded(pathname, now);
   }
 
-  return { judge, judgeFromMemory };
+  return { judge, judgeFromMemory, pending: () => loading };
 }
 
 /** The one list each running copy of the app shares. */

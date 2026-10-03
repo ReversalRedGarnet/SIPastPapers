@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { SITE_URL } from "@/lib/site";
+import { browseSubjectPath, paperPath } from "@/lib/page-links";
 import type { ExamSeries, PublicExamRecord } from "@/types/domain";
 
 /**
@@ -48,15 +49,15 @@ export function buildSitemapEntries(
   // has a file to show.
   const subjectPaths = new Set<string>();
   for (const r of withFiles) {
-    subjectPaths.add(`${r.examSeriesCode}/${r.year}/${r.subjectSlug}`);
+    subjectPaths.add(browseSubjectPath(r.examSeriesCode, r.year, r.subjectSlug));
   }
   for (const path of subjectPaths) {
-    entries.push({ url: `${SITE_URL}/browse/${path}`, changeFrequency: "weekly", priority: 0.6 });
+    entries.push({ url: `${SITE_URL}${path}`, changeFrequency: "weekly", priority: 0.6 });
   }
 
   for (const r of withFiles) {
     entries.push({
-      url: `${SITE_URL}/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`,
+      url: `${SITE_URL}${paperPath(r)}`,
       changeFrequency: "monthly",
       priority: 0.5,
     });
