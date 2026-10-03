@@ -187,7 +187,10 @@ npm run test                 # both
 
    Without them (or on a pull request from a fork) this job is skipped with
    a warning. CI never has R2 credentials or the real database's connection
-   string.
+   string. Only one run of this job uses the test branch at a time, and it
+   fails if the tests leave any rows behind there
+   (`scripts/test-db-rows.ts` counts every table before and after; it also
+   works locally).
 
 Any locally-stored uploaded files are created on first run under
 `local-storage/` (gitignored, disposable). With `STORAGE_BACKEND=r2`, files
