@@ -44,26 +44,16 @@ export async function generateMetadata({ params }: SubjectPageProps): Promise<Me
 // published", so it gets the shortest cache time of any browse page.
 export const revalidate = 300;
 
-// This is required to make the caching above actually take effect on a
-// page whose web address has variable parts in it (exam series, year,
-// and subject) — same reason as in src/app/browse/[series]/page.tsx.
-// Multiplying series × years × subjects still only comes to a few hundred
-// combinations, so pre-building all of them ahead of time is cheap — and
-// a combination with no published papers yet simply shows the normal
-// "nothing here" message.
+// Returning an empty list means "don't build any of these pages ahead of
+// time" -- each one is built the first time someone visits it, then cached
+// (refreshed every `revalidate` seconds above). Pre-building all ~630
+// series × year × subject combinations made every deployment rewrite all
+// of them as ISR writes, whether or not anyone visited them. Next.js needs
+// this function to exist, even empty, to cache pages for addresses it only
+// finds out about while running. Made-up addresses never get this far:
+// src/proxy.ts answers them with a 404 first.
 export async function generateStaticParams() {
-  const examSeries = await listExamSeries();
-  const subjects = await listSubjects();
-  const years = listBrowseYears();
-  const params: { series: string; year: string; subject: string }[] = [];
-  for (const s of examSeries) {
-    for (const year of years) {
-      for (const subject of subjects) {
-        params.push({ series: s.code, year: String(year), subject: subject.subjectCode ?? subject.id });
-      }
-    }
-  }
-  return params;
+  return [];
 }
 
 export default async function SubjectPage({ params }: SubjectPageProps) {

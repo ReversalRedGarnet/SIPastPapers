@@ -2,6 +2,14 @@ import { randomUUID, createHash } from "node:crypto";
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { query, queryOne, queryWithoutRetry, withTransaction } from "./client";
+import {
+  APPROVED_RIGHTS_STATUSES,
+  IS_CURRENT_FILE,
+  PUBLICLY_VISIBLE,
+  QUARANTINE_PREFIX,
+  SERVABLE,
+} from "./visibility";
+export { QUARANTINE_PREFIX } from "./visibility";
 import { listBrowseYears } from "@/lib/browse-years";
 import { getStorageProvider, StorageKeyExistsError, type StorageProvider } from "@/lib/storage";
 import { buildStorageKey } from "@/lib/storage/types";
@@ -277,78 +285,8 @@ export const listYears = cache(async (): Promise<number[]> => {
 
 // --- public reads ------------------------------------------------------
 
-/**
- * The rights statuses under which a paper may be public (PROJECT_SPEC
- * section 17.1). approveRights only ever sets one of these.
- */
-const APPROVED_RIGHTS_STATUSES: readonly RightsStatus[] = ["permission_granted", "public_domain_or_expired"];
-
-/**
- * SQL, for use inside a query on `artifacts a`: true when the paper's most
- * recent rights record has an approved status and hasn't expired (a record
- * is still valid on its expiry date itself).
- *
- * The publish step already refuses papers without approved rights, but
- * rights can change after publishing (a hold, a denial, an expiry date
- * passing) -- so every public read checks them again too, rather than
- * trusting the "published" status alone.
- */
-const RIGHTS_CURRENTLY_APPROVED = `exists (
-  select 1 from (
-    select rr.rights_status, rr.expiry_date
-    from rights_records rr
-    where rr.artifact_id = a.id
-    order by rr.created_at desc
-    limit 1
-  ) latest
-  where latest.rights_status in (${APPROVED_RIGHTS_STATUSES.map((s) => `'${s}'`).join(", ")})
-    and (latest.expiry_date is null or latest.expiry_date >= current_date)
-)`;
-
-/**
- * SQL, for a query joining `files f` to `artifacts a`: true only for the
- * paper's current file -- its most recently added one, the same one
- * PUBLIC_ARTIFACT_SELECT links to (ties broken by id, identically). Older
- * versions of a replaced file are never served or zipped, e.g. a scan
- * replaced because it showed a student's name.
- */
-const IS_CURRENT_FILE = `f.id = (
-  select f2.id from files f2
-  where f2.artifact_id = a.id
-  order by f2.created_at desc, f2.id desc
-  limit 1
-)`;
-
-/**
- * Every key a file is moved to when its paper is unpublished starts with
- * this (see quarantineKeyFor). Nothing stored under it is ever served.
- */
-export const QUARANTINE_PREFIX = "quarantine/";
-
-/**
- * SQL, for use inside a query on `artifacts a`: true when none of the
- * paper's stored files is in quarantine. Publishing moves quarantined files
- * back first, so a published paper never has one -- this makes sure that
- * even if it somehow did, the paper is treated as not servable rather than
- * served from quarantine.
- */
-const NO_QUARANTINED_FILES = `not exists (
-  select 1 from files fq
-  where fq.artifact_id = a.id and starts_with(fq.storage_key, '${QUARANTINE_PREFIX}')
-)`;
-
-/**
- * SQL: published, with rights currently approved and no file in
- * quarantine -- the only papers whose files may be served.
- */
-const SERVABLE = `(a.status = 'published' and ${RIGHTS_CURRENTLY_APPROVED} and ${NO_QUARANTINED_FILES})`;
-
-/**
- * SQL: everything the public may see -- servable papers, plus "not yet
- * recovered" placeholders, which are listed so a gap is visible but have
- * no file (so no rights question arises).
- */
-const PUBLICLY_VISIBLE = `(${SERVABLE} or a.status = 'not_yet_recovered')`;
+// The visibility rules (approved rights, current file, quarantine, what's
+// servable / publicly visible) live in ./visibility, shared with the proxy.
 
 export interface ExamContentAvailability {
   /** Which exam series (e.g. "SIF3") have at least one paper visible to the public, in any year */

@@ -734,6 +734,19 @@ The project owner should control the GitHub organization/repository, primary dom
   then 302-redirects to a presigned R2 URL valid for 10 minutes (section
   5.1). Accepted trade-off: a link handed out just before a paper is
   unpublished keeps working until it expires — at most ~10 minutes.
+- **2026-10-03 — Browse-subject and paper pages are built on first
+  visit, and made-up addresses are rejected before rendering.** Every
+  deployment was rewriting all ~630 pre-built subject pages as Vercel ISR
+  writes (deployments, not time-based revalidation, were nearly all of
+  the usage). Now only 40 pages are pre-built; the rest are built and
+  stored when first visited. Because Next.js also stores a page that
+  turns out not to exist, `src/proxy.ts` checks browse and paper
+  addresses against the real ones (loaded from the database at most once
+  a minute) and answers made-up ones with a real, uncached 404. If that
+  list can't be loaded, requests go through and the page answers its own
+  404 (now a real 404 status: the paper page no longer streams a loading
+  screen first). Trade-off: the proxy runs on every browse/paper
+  request, including cached ones.
 
 ### 14.3 Documentation set
 
