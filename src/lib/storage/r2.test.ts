@@ -8,114 +8,14 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { text } from "node:stream/consumers";
-import {
-  CopyObjectCommand,
-  DeleteObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-} from "@aws-sdk/client-s3";
+import { CopyObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { R2Storage } from "./r2";
 import { StorageKeyExistsError } from "./types";
 import { pdfServingHeaders } from "./serving-headers";
 
-function notFoundError(name: string, httpStatusCode = 404) {
-  const err = new Error(`${name} error`);
-  (err as { name?: string }).name = name;
-  (err as { $metadata?: { httpStatusCode: number } }).$metadata = { httpStatusCode };
-  return err;
-}
-
-interface FakeObject {
-  body: Buffer;
-  contentType?: string;
-  contentDisposition?: string;
-  cacheControl?: string;
-}
-
-/** Like R2/S3, a single-upload object's ETag is the quoted MD5 of its bytes. */
-function etagOf(body: Buffer): string {
-  return `"${createHash("md5").update(body).digest("hex")}"`;
-}
-
-/** A stand-in for the real cloud storage connection — just an in-memory list of saved files. */
-function createFakeS3Client() {
-  const objects = new Map<string, FakeObject>();
-
-  const client = {
-    objects,
-    send: async (command: unknown) => {
-      if (command instanceof PutObjectCommand) {
-        const { Key, Body, ContentType, ContentDisposition, CacheControl, IfNoneMatch } = command.input;
-        // Like real R2: "If-None-Match: *" makes the write fail with 412
-        // when something is already stored at this key.
-        if (IfNoneMatch === "*" && objects.has(Key!)) throw notFoundError("PreconditionFailed", 412);
-        objects.set(Key!, {
-          body: Buffer.from(Body as Buffer),
-          contentType: ContentType,
-          contentDisposition: ContentDisposition,
-          cacheControl: CacheControl,
-        });
-        return {};
-      }
-      if (command instanceof CopyObjectCommand) {
-        const { Bucket, Key, CopySource, CopySourceIfMatch, MetadataDirective } = command.input;
-        const sourceKey = decodeURIComponent(CopySource!.slice(`${Bucket}/`.length));
-        const source = objects.get(sourceKey);
-        if (!source) throw notFoundError("NoSuchKey");
-        if (CopySourceIfMatch && CopySourceIfMatch !== etagOf(source.body)) {
-          throw notFoundError("PreconditionFailed", 412);
-        }
-        // REPLACE: the copy gets exactly the headers sent with this
-        // request -- anything not re-sent is dropped, as on real R2.
-        objects.set(
-          Key!,
-          MetadataDirective === "REPLACE"
-            ? {
-                body: source.body,
-                contentType: command.input.ContentType,
-                contentDisposition: command.input.ContentDisposition,
-                cacheControl: command.input.CacheControl,
-              }
-            : { ...source }
-        );
-        return {};
-      }
-      if (command instanceof GetObjectCommand) {
-        const obj = objects.get(command.input.Key!);
-        if (!obj) throw notFoundError("NoSuchKey");
-        // A real Node.js stream, matching what the actual cloud storage
-        // toolkit hands back in this app. We also attach
-        // transformToByteArray here so the get() method's simpler,
-        // whole-file-at-once code path keeps working in these tests too.
-        const body = Readable.from(obj.body) as Readable & { transformToByteArray: () => Promise<Uint8Array> };
-        body.transformToByteArray = async () => new Uint8Array(obj.body);
-        return { Body: body };
-      }
-      if (command instanceof HeadObjectCommand) {
-        const obj = objects.get(command.input.Key!);
-        if (!obj) throw notFoundError("NotFound");
-        return {
-          ContentType: obj.contentType,
-          ContentDisposition: obj.contentDisposition,
-          CacheControl: obj.cacheControl,
-          ContentLength: obj.body.byteLength,
-          ETag: etagOf(obj.body),
-        };
-      }
-      if (command instanceof DeleteObjectCommand) {
-        objects.delete(command.input.Key!);
-        return {};
-      }
-      throw new Error(`Unhandled command in fake S3 client: ${(command as { constructor: { name: string } }).constructor.name}`);
-    },
-  };
-
-  return client;
-}
+import { createFakeS3Client } from "./fake-s3-client";
 
 test("R2Storage put/get round-trips bytes through the (fake) bucket", async () => {
   const fake = createFakeS3Client();
@@ -325,4 +225,26 @@ test("R2Storage.copy keeps the original and its headers, and never overwrites th
   const moved = await storage.describe("quarantine/20261001T000000/archive/a.pdf");
   assert.equal(moved?.contentDisposition, SERVING.contentDisposition, "stored headers travel with the file");
   assert.equal((await storage.get("quarantine/20261001T000000/archive/a.pdf"))!.toString(), "%PDF-1.4\n%a\n");
+});
+
+test("a file quarantined and then restored (copy + delete, both ways) keeps its R2 serving headers", async () => {
+  const storage = storageWith(createFakeS3Client());
+  const original = "archive/sisc-l1/2019/mathematics/question-paper/paper-1.pdf";
+  const quarantined = `quarantine/20261001T000000/${original}`;
+  await storage.put(original, Buffer.from("%PDF-1.4\n%restore\n"), SERVING);
+  const before = await storage.describe(original);
+
+  // What unpublish then publish do (see relocateStoredFile in src/lib/db/queries.ts).
+  await storage.copy(original, quarantined);
+  await storage.delete(original);
+  await storage.copy(quarantined, original);
+  await storage.delete(quarantined);
+
+  const after = await storage.describe(original);
+  assert.equal(after?.contentType, "application/pdf");
+  assert.equal(after?.contentDisposition, SERVING.contentDisposition);
+  assert.match(after?.contentDisposition ?? "", /^inline; /);
+  assert.equal(after?.cacheControl, "private, max-age=600");
+  assert.equal(after?.etag, before?.etag, "same bytes");
+  assert.equal(await storage.exists(quarantined), false);
 });

@@ -24,6 +24,8 @@ import { query, queryOne, withRolledBackTransaction, closePool } from "./client"
 import { artifactSlug } from "@/lib/artifact-naming";
 import type { CoverageCell, FileRelocation } from "@/lib/db/queries";
 import type { StorageProvider } from "@/lib/storage";
+import { fakeR2Storage } from "@/lib/storage/fake-s3-client";
+import { pdfServingHeaders } from "@/lib/storage/serving-headers";
 
 let queries: typeof import("@/lib/db/queries");
 let getStorageProvider: typeof import("@/lib/storage").getStorageProvider;
@@ -666,6 +668,35 @@ test("publishing again moves the file back from quarantine to its original key, 
       [paper.artifactId]
     );
     assert.deepEqual(event.metadata, { fileId: file.id, from: quarantined.storage_key, to: file.storage_key });
+  });
+});
+
+test("on R2, a file quarantined and restored by relocateStoredFile keeps Content-Type, inline Content-Disposition and Cache-Control", async () => {
+  await withRolledBackTransaction(async () => {
+    // A fake, in-memory R2 bucket -- never the real one (see test-database-env.ts).
+    const r2 = fakeR2Storage();
+    const move = await relocationFor("23");
+    const title = (await queryOne<{ title: string }>("select title from artifacts where id = $1", [move.artifactId]))!.title;
+    const headers = pdfServingHeaders(title);
+    await r2.put(move.fromKey, (await getStorageProvider().get(move.fromKey))!, headers);
+
+    const out = await queries.relocateStoredFile(r2, move);
+    assert.deepEqual(out, { moved: true, leftoverKey: null });
+    const back = await queries.relocateStoredFile(r2, {
+      ...move,
+      fromKey: move.toKey,
+      toKey: move.fromKey,
+      eventType: "file_restored",
+    });
+    assert.deepEqual(back, { moved: true, leftoverKey: null });
+
+    const restored = await r2.describe(move.fromKey);
+    assert.equal(restored?.contentType, "application/pdf");
+    assert.equal(restored?.contentDisposition, headers.contentDisposition);
+    assert.match(restored?.contentDisposition ?? "", /^inline; filename=".+\.pdf"; filename\*=UTF-8''/);
+    assert.equal(restored?.cacheControl, "private, max-age=600");
+    assert.equal(await r2.exists(move.toKey), false, "nothing left in quarantine");
+    assert.equal(await recordedKey(move.fileId), move.fromKey);
   });
 });
 
