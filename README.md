@@ -31,7 +31,10 @@ in the repository.
   [`src/lib/db/queries.ts`](./src/lib/db/queries.ts):
   - `/` — homepage with search bar and exam level / year / subject selectors.
   - `/results` — filtered, paginated results table (published artifacts
-    only).
+    only). The search box understands years ("2018"), exam levels
+    however they're written ("Year 11", "Form 5", "SISC L1") and short
+    subject names ("maths"); every other word must match
+    (`src/lib/search-query.ts`).
   - `/browse` — click-through by exam level → year → subject → paper
     (`/browse` → `/browse/[series]` → `/browse/[series]/[year]` →
     `/browse/[series]/[year]/[subject]`); a series or year with nothing

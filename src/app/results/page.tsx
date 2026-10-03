@@ -118,7 +118,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
             <label htmlFor="q" className="visually-hidden">
               Search
             </label>
-            <input type="search" id="q" name="q" defaultValue={filters.q ?? ""} placeholder="Search papers" />
+            <input type="search" id="q" name="q" defaultValue={filters.q ?? ""} placeholder="e.g. Year 11 maths 2018" />
           </div>
           <button type="submit">Search</button>
         </div>

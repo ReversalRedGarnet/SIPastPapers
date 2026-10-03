@@ -877,3 +877,33 @@ test("unpublish quarantines a file still left at its original key by an earlier 
     assert.equal(await getStorageProvider().exists(file.storage_key), false);
   });
 });
+
+test("search: words are matched separately, with years, exam levels and short forms understood", async () => {
+  await withRolledBackTransaction(async () => {
+    const paper = await publishTestPaper("41");
+    const finds = async (q: string) =>
+      (await queries.searchPublicArtifacts({ q })).some((r) => r.id === paper.artifactId);
+
+    for (const q of ["Mathematics 2099", "2099 maths", "maths 2099", "Year 11 maths 2099", "form 5 mathematics 2099", "SISC L1 2099 math", "paper 41 2099", "2099 past papers"]) {
+      assert.equal(await finds(q), true, `"${q}" should find it`);
+    }
+    for (const q of ["form 3 maths 2099", "Year 12 maths 2099", "english 2099", "maths 2098", "paper 42 2099", "2099 marking scheme"]) {
+      assert.equal(await finds(q), false, `"${q}" should not find it`);
+    }
+  });
+});
+
+test("search results have a stable order within a year and subject, so pages never repeat or skip papers", async () => {
+  await withRolledBackTransaction(async () => {
+    const ids = [];
+    for (const n of ["43", "42", "44"]) ids.push((await publishTestPaper(n)).artifactId);
+    const filters = { series: "sisc-l1", year: "2099", subject: "mathematics" };
+    const all = (await queries.searchPublicArtifacts(filters)).map((r) => r.id);
+    const paged = [];
+    for (let page = 1; page <= 3; page++) {
+      paged.push(...(await queries.searchPublicArtifactsPage(filters, { page, limit: 1 })).records.map((r) => r.id));
+    }
+    assert.deepEqual(paged, all, "one-per-page listing matches the full listing exactly");
+    assert.equal(new Set(paged).size, 3);
+  });
+});

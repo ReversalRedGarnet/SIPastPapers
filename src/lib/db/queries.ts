@@ -21,6 +21,7 @@ import {
 } from "@/lib/artifact-naming";
 import { pdfServingHeaders } from "@/lib/storage/serving-headers";
 import { deleteYearZips } from "@/lib/year-zip";
+import { parseSearchQuery } from "@/lib/search-query";
 import type {
   ArtifactStatus,
   ArtifactType,
@@ -381,17 +382,45 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
   // `undefined` instead of crashing by trying to call .trim() on nothing."
   const q = filters.q?.trim();
   if (q) {
-    params.push(`%${q}%`);
-    const p = `$${params.length}`;
-    clauses.push(`(a.title ilike ${p} or s.canonical_name ilike ${p} or es.name ilike ${p})`);
+    // The search box text, split into a year filter, an exam-series filter
+    // and words that must each match -- see src/lib/search-query.ts.
+    const search = parseSearchQuery(q);
+    if (search.years.length > 0) {
+      params.push(search.years.join(","));
+      clauses.push(`ei.year = any(string_to_array($${params.length}, ',')::int[])`);
+    }
+    if (search.seriesCodes.length > 0) {
+      params.push(search.seriesCodes.join(","));
+      clauses.push(`es.code = any(string_to_array($${params.length}, ','))`);
+    }
+    for (const group of search.termGroups) {
+      // Each word (or one of its short forms) must appear somewhere. The
+      // words only ever contain letters, digits, spaces and "&", so they
+      // can't carry LIKE wildcards.
+      const alternatives = group.map((term) => {
+        params.push(`%${term}%`);
+        const p = `$${params.length}`;
+        return `a.title ilike ${p} or s.canonical_name ilike ${p} or es.name ilike ${p}
+          or exists (select 1 from jsonb_array_elements_text(s.aliases) alias where alias ilike ${p})`;
+      });
+      clauses.push(`(${alternatives.join(" or ")})`);
+    }
   }
 
   return { clauses, params };
 }
 
+/**
+ * Results order: newest year first, then subject, then a fixed order
+ * within a subject (type, paper number, id) -- so every page of results
+ * lists papers in the same order and none repeat or go missing between
+ * pages.
+ */
+const PUBLIC_RESULTS_ORDER = "order by ei.year desc, s.canonical_name, a.type, a.paper_no nulls first, a.id";
+
 export const searchPublicArtifacts = cache(async (filters: PublicArtifactFilters): Promise<PublicExamRecord[]> => {
   const { clauses, params } = buildPublicArtifactFilterClauses(filters);
-  const sql = `${PUBLIC_ARTIFACT_SELECT} where ${clauses.join(" and ")} order by ei.year desc, s.canonical_name`;
+  const sql = `${PUBLIC_ARTIFACT_SELECT} where ${clauses.join(" and ")} ${PUBLIC_RESULTS_ORDER}`;
   const rows = await query<PublicArtifactRow>(sql, params);
   return rows.map(hydratePublicRecord);
 });
@@ -470,7 +499,7 @@ export async function searchPublicArtifactsPage(
   const dataParams = [...params, limit, offset];
   const [rows, countRows] = await Promise.all([
     query<PublicArtifactRow>(
-      `${PUBLIC_ARTIFACT_SELECT} where ${where} order by ei.year desc, s.canonical_name limit $${dataParams.length - 1} offset $${dataParams.length}`,
+      `${PUBLIC_ARTIFACT_SELECT} where ${where} ${PUBLIC_RESULTS_ORDER} limit $${dataParams.length - 1} offset $${dataParams.length}`,
       dataParams
     ),
     query<{ total: string }>(`select count(*) as total from (${PUBLIC_ARTIFACT_SELECT} where ${where}) sub`, params),
