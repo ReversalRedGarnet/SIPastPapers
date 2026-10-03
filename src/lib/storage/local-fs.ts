@@ -1,7 +1,7 @@
-import { createReadStream, promises as fs } from "node:fs";
+import { constants as fsConstants, createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import type { PutResult, StorageProvider } from "./types";
+import { StorageKeyExistsError, type PutResult, type StorageProvider } from "./types";
 
 /**
  * Saves files on the local disk, under `<project folder>/local-storage/<key>`.
@@ -45,7 +45,15 @@ export class LocalFilesystemStorage implements StorageProvider {
   async put(key: string, data: Buffer): Promise<PutResult> {
     const dest = this.resolve(key);
     await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.writeFile(dest, data);
+    try {
+      // The "wx" flag means "create this file, but fail if it already
+      // exists" -- checked by the operating system in the same step as the
+      // write, so there's no gap in which another write could sneak in.
+      await fs.writeFile(dest, data, { flag: "wx" });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") throw new StorageKeyExistsError(key);
+      throw err;
+    }
     return { key, bytes: data.byteLength };
   }
 
@@ -90,6 +98,40 @@ export class LocalFilesystemStorage implements StorageProvider {
 
   async delete(key: string): Promise<void> {
     await fs.rm(this.resolve(key), { force: true });
+  }
+
+  async list(prefix: string): Promise<string[]> {
+    // Look only in the folder the prefix points into, then keep the keys
+    // that actually start with the prefix (it may end part-way through a
+    // name, e.g. "zips/sisc-l1/20").
+    const dir = this.resolve(prefix.includes("/") ? prefix.slice(0, prefix.lastIndexOf("/")) : ".");
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir, { recursive: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+    const keys: string[] = [];
+    for (const entry of entries) {
+      const full = path.join(dir, entry);
+      if (!(await fs.stat(full)).isFile()) continue;
+      const key = path.relative(this.rootDir, full).split(path.sep).join("/");
+      if (key.startsWith(prefix)) keys.push(key);
+    }
+    return keys;
+  }
+
+  async copy(fromKey: string, toKey: string): Promise<void> {
+    const dest = this.resolve(toKey);
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    try {
+      // COPYFILE_EXCL: fail rather than replace an existing file.
+      await fs.copyFile(this.resolve(fromKey), dest, fsConstants.COPYFILE_EXCL);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") throw new StorageKeyExistsError(toKey);
+      throw err;
+    }
   }
 
   locate(key: string): string {

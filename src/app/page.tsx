@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 // `Link` is Next.js's version of an HTML link (`<a>`). Using it instead of
 // a plain link lets Next.js navigate to the new page without a full,
 // slower browser page reload.
@@ -24,6 +25,13 @@ export const revalidate = 300;
 // declared `async` because it needs to `await` (pause and wait for) slow
 // work -- here, several database reads -- before it has everything it
 // needs to describe the finished page.
+// The site's title and description come from the root layout; this only
+// adds the homepage's canonical address. (A canonical in the layout would
+// apply to every page that doesn't set its own -- all pointing at "/".)
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
+
 export default async function HomePage() {
   // These four pieces of data don't depend on each other, so we fetch
   // them all at the same time instead of one after another — which means
@@ -87,7 +95,7 @@ export default async function HomePage() {
               <label htmlFor="q" className="visually-hidden">
                 Search
               </label>
-              <input type="search" id="q" name="q" placeholder="e.g. Mathematics 2018" style={{ maxWidth: "none" }} />
+              <input type="search" id="q" name="q" placeholder="e.g. Year 11 maths 2018" style={{ maxWidth: "none" }} />
             </div>
 
             <div className="search-form__filters field">
@@ -154,7 +162,7 @@ export default async function HomePage() {
           <ul className="list-rows">
             {examSeries.map((s) => (
               <li key={s.code}>
-                <Link href={`/browse/${s.code}`} className="list-row">
+                <Link prefetch={false} href={`/browse/${s.code}`} className="list-row">
                   <span className="list-row__label">{seriesDisplayLabel(s.code)}</span>
                   <span className="list-row__chevron" aria-hidden="true">
                     ›
@@ -206,7 +214,18 @@ export default async function HomePage() {
                       <td>
                         {/* Template literal again (see src/lib/format.ts) -- builds the
                             paper's address by dropping its fields into the URL text. */}
-                        <Link href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}>View</Link>
+                        <Link
+                          href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}
+                          className="table-action"
+                          prefetch={false}
+                        >
+                          View
+                          {/* Names the paper for screen readers: every row has a "View". */}
+                          <span className="visually-hidden">
+                            {" "}
+                            {r.subject} {r.year} {typeLabel}, {seriesDisplayLabel(r.examSeriesCode)}
+                          </span>
+                        </Link>
                       </td>
                     </tr>
                   );

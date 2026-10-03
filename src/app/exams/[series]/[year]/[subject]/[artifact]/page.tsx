@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { getPublicArtifactBySlug, listSubjectArtifacts } from "@/lib/db/queries";
 import { artifactListLabel } from "@/lib/artifact-naming";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
 import { CONTACT_EMAIL, SITE_NAME, SITE_URL } from "@/lib/site";
+import { PdfPreview } from "@/components/PdfPreview";
+import { ReportStatus } from "@/components/ReportStatus";
+import { CONTACT_MAX_LENGTH, DESCRIPTION_MAX_LENGTH, HONEYPOT_FIELD } from "@/lib/report-form";
 import { reportIssueAction } from "./actions";
 
 interface DocumentPageProps {
@@ -14,7 +18,6 @@ interface DocumentPageProps {
     subject: string;
     artifact: string;
   }>;
-  searchParams: Promise<{ reported?: string; reportError?: string }>;
 }
 
 function loadRecord(params: {
@@ -38,18 +41,40 @@ export async function generateMetadata({
   const seriesLabel = seriesDisplayLabel(record.examSeriesCode);
   const title = `${seriesLabel} ${record.subject} ${record.year} — ${label}`;
   const description = `${label} for ${record.subject} — ${seriesLabel} ${record.year} exam paper from the Solomon Islands national exam archive, free to view and download.`;
+  const path = `/exams/${record.examSeriesCode}/${record.year}/${record.subjectSlug}/${record.slug}`;
   return {
     title,
     description,
-    openGraph: { title, description, type: "article" },
+    alternates: { canonical: path },
+    // A "not yet recovered" placeholder has no document behind it -- a thin
+    // page, kept out of search results (and out of the sitemap).
+    ...(!record.file && { robots: { index: false, follow: true } }),
+    openGraph: { title, description, type: "article", url: path },
   };
 }
 
 // This content only changes when the operator publishes/unpublishes
-// something via the command-line tool — occasional, not continuous — so
-// the same 5-minute cache tier as the subject-listing page (one level up
-// in the browse hierarchy) works fine here too.
-export const revalidate = 300;
+// something via the command-line tool -- occasional, not continuous -- so
+// the page is refreshed at most once an hour. After an unpublish, the
+// page's text can stay up for up to that hour, but the PDF itself stops at
+// once: /api/files checks publication and rights live on every request.
+// (Refreshing a page whose content hasn't changed costs no ISR write, so
+// the interval mostly saves function runs and database wake-ups.)
+//
+// This only takes effect because nothing on this page reads the address's
+// query string on the server (the report form's "?report=" message is read
+// in the browser instead -- see ReportStatus). Reading `searchParams` here
+// would make Next.js render the page fresh for every single visit.
+export const revalidate = 3600;
+
+// Returning an empty list means "don't build any of these pages ahead of
+// time" -- each paper's page is built the first time someone visits it,
+// then cached and reused (refreshed every `revalidate` seconds above).
+// Next.js needs this function to exist, even empty, to cache pages for
+// addresses it only finds out about while running.
+export async function generateStaticParams() {
+  return [];
+}
 
 const ISSUE_TYPES = [
   { value: "wrong_metadata", label: "Wrong year, subject, or paper number" },
@@ -59,11 +84,10 @@ const ISSUE_TYPES = [
   { value: "other", label: "Something else" },
 ];
 
-export default async function DocumentPage({ params, searchParams }: DocumentPageProps) {
+export default async function DocumentPage({ params }: DocumentPageProps) {
   const found = await loadRecord(await params);
   if (!found) notFound();
   const { record, related } = found;
-  const { reported, reportError } = await searchParams;
 
   const currentPath = `/exams/${record.examSeriesCode}/${record.year}/${record.subjectSlug}/${record.slug}`;
   const typeLabel = artifactListLabel(record.artifactType, record.paperNumber);
@@ -152,10 +176,10 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
           formatting -- forces a real space to appear there, so text doesn't
           run together at the line break below. */}
       <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link href="/browse">Browse</Link> ›{" "}
-        <Link href={`/browse/${record.examSeriesCode}`}>{seriesLabel}</Link> ›{" "}
-        <Link href={`/browse/${record.examSeriesCode}/${record.year}`}>{record.year}</Link> ›{" "}
-        <Link href={`/browse/${record.examSeriesCode}/${record.year}/${record.subjectSlug}`}>
+        <Link prefetch={false} href="/browse">Browse</Link> ›{" "}
+        <Link prefetch={false} href={`/browse/${record.examSeriesCode}`}>{seriesLabel}</Link> ›{" "}
+        <Link prefetch={false} href={`/browse/${record.examSeriesCode}/${record.year}`}>{record.year}</Link> ›{" "}
+        <Link prefetch={false} href={`/browse/${record.examSeriesCode}/${record.year}/${record.subjectSlug}`}>
           {record.subject}
         </Link>{" "}
         › {typeLabel}
@@ -163,21 +187,24 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
 
       <div className="doc-layout">
         <div className="doc-meta card">
-          <h1>{record.subject}</h1>
-          <p className="doc-subtitle">
-            {seriesLabel} · {record.year}
-          </p>
+          <h1>
+            {record.subject} {record.year} — {typeLabel}
+          </h1>
+          <p className="doc-subtitle">{seriesLabel}</p>
 
           {record.file ? (
             <>
               <div className="doc-actions">
-                <a className="button" href={`/api/files/${record.file.id}?dl=1`}>
-                  Download ({formatBytes(record.file.bytes)})
+                <a className="button" href={`/api/files/${record.file.id}`}>
+                  Open PDF ({formatBytes(record.file.bytes)})
                 </a>
                 <a className="button secondary" href={`/api/files/${record.file.id}`} target="_blank" rel="noreferrer">
                   Open in new tab
                 </a>
               </div>
+              <p className="hint">
+                It opens in your browser. To keep a copy, use your browser&apos;s download or share button.
+              </p>
 
               <details className="tech-details">
                 <summary>More information</summary>
@@ -215,7 +242,11 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
 
         <div className="doc-viewer">
           {record.file ? (
-            <iframe src={`/api/files/${record.file.id}`} className="pdf-frame" title={`Preview of ${record.title}`} />
+            <PdfPreview
+              src={`/api/files/${record.file.id}?preview=1`}
+              title={`Preview of ${record.title}`}
+              sizeLabel={formatBytes(record.file.bytes)}
+            />
           ) : (
             <div className="empty-state" style={{ border: "none" }}>
               No file to preview yet.
@@ -227,7 +258,7 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
       {(prevPaper || nextPaper) && (
         <nav aria-label="Adjacent papers in this subject" className="paper-pager">
           {prevPaper ? (
-            <Link href={paperHref(prevPaper)} className="paper-pager__link paper-pager__link--prev">
+            <Link prefetch={false} href={paperHref(prevPaper)} className="paper-pager__link paper-pager__link--prev">
               <span className="paper-pager__direction">‹ Previous</span>
               <span className="paper-pager__label">
                 {prevPaper.subject} {prevPaper.year} — {artifactListLabel(prevPaper.artifactType, prevPaper.paperNumber)}
@@ -237,7 +268,7 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
             <span />
           )}
           {nextPaper ? (
-            <Link href={paperHref(nextPaper)} className="paper-pager__link paper-pager__link--next">
+            <Link prefetch={false} href={paperHref(nextPaper)} className="paper-pager__link paper-pager__link--next">
               <span className="paper-pager__direction">Next ›</span>
               <span className="paper-pager__label">
                 {nextPaper.subject} {nextPaper.year} — {artifactListLabel(nextPaper.artifactType, nextPaper.paperNumber)}
@@ -255,7 +286,7 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
           <ul className="list-rows">
             {otherYears.map((y) => (
               <li key={y}>
-                <Link href={`/browse/${record.examSeriesCode}/${y}/${record.subjectSlug}`} className="list-row">
+                <Link prefetch={false} href={`/browse/${record.examSeriesCode}/${y}/${record.subjectSlug}`} className="list-row">
                   <span className="list-row__label">
                     {record.subject} {y}
                   </span>
@@ -276,6 +307,7 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
             {related.map((r) => (
               <li key={r.id}>
                 <Link
+                  prefetch={false}
                   href={`/exams/${r.examSeriesCode}/${r.year}/${r.subjectSlug}/${r.slug}`}
                   className="list-row"
                 >
@@ -300,19 +332,14 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
           <Link href="/about#corrections">correction and takedown process</Link>.
         </p>
 
-        {reported && (
-          <div className="confirmation" role="status">
-            <p>Thanks — this has been logged and will be reviewed.</p>
-          </div>
-        )}
-        {/* `decodeURIComponent` reverses `encodeURIComponent` (see
-            ./actions.ts), turning the escaped text back from the URL's
-            query string into ordinary readable text. */}
-        {reportError && (
-          <div className="confirmation" role="alert">
-            <p>{decodeURIComponent(reportError)}</p>
-          </div>
-        )}
+        {/* <Suspense> marks the one part of this page that can only be
+            filled in once the browser has the full address (ReportStatus
+            reads its "?report=" code). Everything else on the page is
+            built and cached ahead of time; this part shows nothing
+            (`fallback={null}`) until then. */}
+        <Suspense fallback={null}>
+          <ReportStatus />
+        </Suspense>
 
         <form aria-label="Report a problem with this record">
           <input type="hidden" name="artifactId" value={record.id} />
@@ -334,14 +361,22 @@ export default async function DocumentPage({ params, searchParams }: DocumentPag
 
           <div className="field">
             <label htmlFor="description">Details</label>
-            <textarea id="description" name="description" required />
+            <textarea id="description" name="description" required maxLength={DESCRIPTION_MAX_LENGTH} />
           </div>
 
           <div className="field">
             <label htmlFor="contact">
               Your email <span className="hint">(optional, only if you&apos;re happy to be contacted)</span>
             </label>
-            <input type="email" id="contact" name="contact" />
+            <input type="email" id="contact" name="contact" maxLength={CONTACT_MAX_LENGTH} />
+          </div>
+
+          {/* Spam trap (see HONEYPOT_FIELD in src/lib/report-form.ts):
+              hidden from sight, from screen readers and from keyboard
+              focus, so only bots that fill in every field will fill it. */}
+          <div className="visually-hidden" aria-hidden="true">
+            <label htmlFor={HONEYPOT_FIELD}>Leave this empty</label>
+            <input type="text" id={HONEYPOT_FIELD} name={HONEYPOT_FIELD} tabIndex={-1} autoComplete="off" />
           </div>
 
           <div className="form-actions">

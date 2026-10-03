@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "About",
   description:
     "How the SI National Exam Archive is run: purpose, ownership and independence from MEHRD, licensing, and the correction/takedown process for reported papers.",
+  alternates: { canonical: "/about" },
 };
 
 export default function AboutPage() {

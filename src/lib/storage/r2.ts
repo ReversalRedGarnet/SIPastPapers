@@ -1,12 +1,16 @@
 import { Readable } from "node:stream";
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import type { PutResult, StorageProvider } from "./types";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import type { ServingHeaders } from "./serving-headers";
+import { StorageKeyExistsError, type PutOptions, type PutResult, type StorageProvider } from "./types";
 
 export interface R2StorageConfig {
   accountId: string;
@@ -15,9 +19,24 @@ export interface R2StorageConfig {
   bucketName: string;
 }
 
+/** The headers R2 has stored for one file (what it sends back when the file is downloaded). */
+export interface StoredObjectInfo {
+  contentType?: string;
+  contentDisposition?: string;
+  cacheControl?: string;
+  contentLength?: number;
+  etag?: string;
+  lastModified?: Date;
+}
+
 function isNotFoundError(err: unknown): boolean {
   const e = err as { name?: string; $metadata?: { httpStatusCode?: number } } | undefined;
   return e?.name === "NoSuchKey" || e?.name === "NotFound" || e?.$metadata?.httpStatusCode === 404;
+}
+
+function isPreconditionFailedError(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } } | undefined;
+  return e?.name === "PreconditionFailed" || e?.$metadata?.httpStatusCode === 412;
 }
 
 /**
@@ -41,12 +60,18 @@ export class R2Storage implements StorageProvider {
   // fake object in place of a real S3Client (see the comment above).
   private readonly client: Pick<S3Client, "send">;
   private readonly bucket: string;
+  // Making a presigned link needs the full, real connection (it signs the
+  // link with the account's credentials), not just `send` -- so it's only
+  // available when this class made that connection itself, not with a
+  // test's fake stand-in.
+  private readonly realClient?: S3Client;
 
   constructor(config: R2StorageConfig, client?: Pick<S3Client, "send">) {
     this.bucket = config.bucketName;
-    this.client =
-      client ??
-      new S3Client({
+    if (client) {
+      this.client = client;
+    } else {
+      this.realClient = new S3Client({
         region: "auto",
         endpoint: `https://${config.accountId}.r2.cloudflarestorage.com`,
         credentials: {
@@ -54,17 +79,34 @@ export class R2Storage implements StorageProvider {
           secretAccessKey: config.secretAccessKey,
         },
       });
+      this.client = this.realClient;
+    }
   }
 
-  async put(key: string, data: Buffer, contentType?: string): Promise<PutResult> {
-    const response = await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
-        Body: data,
-        ContentType: contentType,
-      })
-    );
+  async put(key: string, data: Buffer, options: PutOptions = {}): Promise<PutResult> {
+    let response;
+    try {
+      response = await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Body: data,
+          ContentType: options.contentType,
+          // Stored with the file, and sent back by R2 whenever the file is
+          // downloaded straight from R2 -- this is what gives a downloaded
+          // paper its readable name.
+          ContentDisposition: options.contentDisposition,
+          CacheControl: options.cacheControl,
+          // "Only save this if nothing exists at this key yet." R2 checks
+          // this itself, in the same step as the write, and answers 412
+          // Precondition Failed if something is already there.
+          IfNoneMatch: "*",
+        })
+      );
+    } catch (err) {
+      if (isPreconditionFailedError(err)) throw new StorageKeyExistsError(key);
+      throw err;
+    }
     // One concise line per upload — bucket name is already logged once at
     // startup (see getStorageProvider in src/lib/storage/index.ts), and
     // the request id/ETag/version id are only ever useful when actively
@@ -126,15 +168,125 @@ export class R2Storage implements StorageProvider {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
+  async list(prefix: string): Promise<string[]> {
+    const keys: string[] = [];
+    // R2 answers in pages of up to 1,000 keys; keep asking until it says
+    // there are no more.
+    let continuationToken: string | undefined;
+    do {
+      const page = await this.client.send(
+        new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, ContinuationToken: continuationToken })
+      );
+      for (const object of page.Contents ?? []) if (object.Key) keys.push(object.Key);
+      continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return keys;
+  }
+
+  // The three methods below are R2-only (they aren't part of the shared
+  // StorageProvider interface): they're used by the CLI's inspect-object
+  // and set-disposition commands to manage the headers R2 sends when a
+  // file is downloaded straight from R2.
+
+  /** The headers R2 has stored for this file, or null if there's no file at `key`. */
+  async describe(key: string): Promise<StoredObjectInfo | null> {
+    try {
+      const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return {
+        contentType: head.ContentType,
+        contentDisposition: head.ContentDisposition,
+        cacheControl: head.CacheControl,
+        contentLength: head.ContentLength,
+        etag: head.ETag,
+        lastModified: head.LastModified,
+      };
+    } catch (err) {
+      if (isNotFoundError(err)) return null;
+      throw err;
+    }
+  }
+
+  /**
+   * Sets the Content-Type, Content-Disposition and Cache-Control headers
+   * stored with an existing file, without touching the file's bytes. R2
+   * (like S3) can't edit a stored file's headers directly, so this copies
+   * the file onto itself with replacement headers ("MetadataDirective:
+   * REPLACE").
+   *
+   * Two safety details: all three headers are given explicitly and any
+   * other stored header is copied over unchanged (REPLACE would otherwise
+   * drop it), and the copy only happens if the file is still exactly the
+   * one just looked at (its ETag fingerprint matches) -- so this can never
+   * swap in different content.
+   */
+  async setServingHeaders(key: string, headers: ServingHeaders): Promise<StoredObjectInfo> {
+    const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        CopySource: this.copySource(key),
+        CopySourceIfMatch: head.ETag,
+        MetadataDirective: "REPLACE",
+        ContentType: headers.contentType,
+        ContentDisposition: headers.contentDisposition,
+        CacheControl: headers.cacheControl,
+        ContentEncoding: head.ContentEncoding,
+        ContentLanguage: head.ContentLanguage,
+        Metadata: head.Metadata,
+      })
+    );
+    const after = await this.describe(key);
+    if (!after) throw new Error(`"${key}" disappeared from R2 while its headers were being updated`);
+    return after;
+  }
+
+  /**
+   * Copies a file to a new key, leaving the original in place (R2 has no
+   * "rename"; a move is this followed by delete()). The copy keeps all the
+   * file's stored headers, and only happens if the file is still exactly
+   * the one just looked at (ETag). Refuses if something is already stored
+   * at `toKey`.
+   */
+  async copy(fromKey: string, toKey: string): Promise<void> {
+    if (await this.exists(toKey)) throw new StorageKeyExistsError(toKey);
+    const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: fromKey }));
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.bucket,
+        Key: toKey,
+        CopySource: this.copySource(fromKey),
+        CopySourceIfMatch: head.ETag,
+      })
+    );
+  }
+
+  /** "<bucket>/<key>", with each part of the key URL-encoded, as CopyObject's copy-source format requires. */
+  private copySource(key: string): string {
+    return `${this.bucket}/${key.split("/").map(encodeURIComponent).join("/")}`;
+  }
+
+  /**
+   * A temporary link that downloads this file straight from R2, valid for
+   * `expiresInSeconds`. Anyone holding the link can download the file until
+   * it expires, so only hand these out for files that are allowed to be
+   * public -- /api/files checks that on every request before handing one out.
+   */
+  async presignedGetUrl(key: string, expiresInSeconds: number): Promise<string> {
+    if (!this.realClient) {
+      throw new Error("presignedGetUrl needs a real R2 connection (it isn't available with a test client).");
+    }
+    return getSignedUrl(this.realClient, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
+      expiresIn: expiresInSeconds,
+    });
+  }
+
   locate(key: string): string {
     // This isn't a web address you can open directly in a browser (the
-    // storage bucket isn't set up for public access). Files are instead
-    // served through our own /api/files/[fileId] route, which re-checks
-    // whether the paper is still allowed to be downloaded every single
-    // time it's requested. We deliberately don't use a temporary
-    // "presigned" direct link here, because that kind of link would keep
-    // working for a while even after a paper's rights status changed —
-    // see src/lib/storage/index.ts for more on why.
+    // storage bucket isn't set up for public access). Visitors always go
+    // through our own /api/files/[fileId] route, which re-checks whether
+    // the paper is still allowed to be downloaded on every request, and
+    // only then redirects to a short-lived presignedGetUrl() link.
     return `r2://${this.bucket}/${key}`;
   }
 }

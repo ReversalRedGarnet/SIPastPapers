@@ -18,15 +18,31 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import {
   approveRights,
+  getArtifactInstance,
+  getArtifactStatus,
   getCoverageMatrix,
   ingestArtifact,
   listAllArtifacts,
+  listPublishedRightsExpiring,
+  listPublishedWithUnapprovedRights,
+  listServableYearInstances,
+  listStoredFiles,
+  prepareArtifactPurge,
   publishArtifact,
+  purgeArtifactFiles,
   unpublishArtifact,
   type CoverageCell,
   type CoverageStatus,
+  type QuarantineResult,
+  type StoredFile,
 } from "@/lib/db/queries";
-import { artifactTypeSlug } from "@/lib/artifact-naming";
+import { formatBytes, seriesDisplayLabel } from "@/lib/format";
+import { YEAR_ZIP_ROOT } from "@/lib/year-zip";
+import { getYearZipStatus, syncYearZip } from "@/lib/year-zip-build";
+import { artifactTypeSlug, generateDownloadFilename } from "@/lib/artifact-naming";
+import { pdfServingHeaders, type ServingHeaders } from "@/lib/storage/serving-headers";
+import { getStorageProvider } from "@/lib/storage";
+import { R2Storage, type StoredObjectInfo } from "@/lib/storage/r2";
 import type { ArtifactStatus, ArtifactType, RightsStatus } from "@/types/domain";
 import {
   BASIS_CHOICES,
@@ -407,6 +423,112 @@ async function runBulkPublish(series: string, yearRangeRaw: string, flags: Recor
   const summary = await executeBulkPublish(plan.toPublish);
   console.log(`\nBulk publish complete: ${summary.published} published, ${summary.failed} failed.`);
   if (summary.failed > 0) process.exitCode = 1;
+  const years = [...new Set(plan.toPublish.map((a) => a.year))].sort();
+  await printYearZipNotices(years.map((year) => ({ seriesCode: series, year })));
+}
+
+// --- year zips ----------------------------------------------------------------
+
+function buildZipsCommand(seriesCode: string, year: number): string {
+  return `npm run cli -- build-zips --series ${seriesCode} --year ${year} --confirm`;
+}
+
+/**
+ * After publishing or unpublishing: a year whose papers changed needs its
+ * "Download all" zip rebuilt -- until then visitors are told it isn't ready
+ * yet. Says so for each year that needs it.
+ */
+async function printYearZipNotices(instances: { seriesCode: string; year: number }[]): Promise<void> {
+  const storage = getStorageProvider();
+  for (const { seriesCode, year } of instances) {
+    const status = await getYearZipStatus(storage, seriesCode, year);
+    if (status.key && !status.built) {
+      console.log(
+        `\nThe "Download all" zip for ${seriesDisplayLabel(seriesCode)} ${year} needs rebuilding` +
+          ` (until then visitors are told it isn't ready yet):\n  ${buildZipsCommand(seriesCode, year)}`
+      );
+    }
+  }
+}
+
+const BUILD_ZIPS_USAGE = "Usage: build-zips (--series <code> --year <yyyy> | --all) [--confirm]";
+
+/**
+ * build-zips: builds each year's "Download all" zip from the papers that
+ * are servable right now and stores it (R2 in production), then deletes
+ * that year's out-of-date zips. Dry run unless --confirm. A year whose zip
+ * is already up to date is left alone, so `--all` is safe to re-run.
+ */
+async function runBuildZips(args: ParsedArgs): Promise<void> {
+  const { flags } = args;
+  const confirm = flags.confirm === "true";
+  let instances: { seriesCode: string; year: number }[];
+  const storage = getStorageProvider();
+  if (flags.all) {
+    if (flags.series || flags.year) fail(`--all can't be combined with --series/--year.\n${BUILD_ZIPS_USAGE}`);
+    // Every year with servable papers, plus any year that only has old
+    // zips left (e.g. every paper withdrawn) so those get deleted.
+    const found = new Map<string, { seriesCode: string; year: number }>();
+    for (const i of await listServableYearInstances()) found.set(`${i.seriesCode}/${i.year}`, i);
+    for (const key of await storage.list(YEAR_ZIP_ROOT)) {
+      const [, seriesCode, yearText] = key.split("/");
+      if (seriesCode && /^\d{4}$/.test(yearText)) found.set(`${seriesCode}/${yearText}`, { seriesCode, year: Number(yearText) });
+    }
+    instances = [...found.values()].sort((a, b) => a.seriesCode.localeCompare(b.seriesCode) || a.year - b.year);
+  } else {
+    if (!flags.series || !/^\d{4}$/.test(flags.year ?? "")) fail(BUILD_ZIPS_USAGE);
+    instances = [{ seriesCode: flags.series, year: Number(flags.year) }];
+  }
+
+  let toBuild = 0;
+  let upToDate = 0;
+  let built = 0;
+  let deleted = 0;
+  let failed = 0;
+  let builtBytes = 0;
+  for (const { seriesCode, year } of instances) {
+    const label = `${seriesDisplayLabel(seriesCode)} ${year}`.padEnd(28);
+    const status = await getYearZipStatus(storage, seriesCode, year);
+    const stale = status.staleKeys.length > 0 ? `, ${status.staleKeys.length} old zip(s) to delete` : "";
+    if (!status.key) {
+      console.log(`NO PAPERS    ${label} (no servable papers${stale})`);
+    } else if (status.built) {
+      upToDate++;
+      console.log(`UP TO DATE   ${label} (${status.files.length} papers${stale})`);
+    } else {
+      toBuild++;
+      console.log(`NEEDS BUILD  ${label} (${status.files.length} papers${stale})`);
+    }
+    if (!confirm || (status.built && status.staleKeys.length === 0) || (!status.key && status.staleKeys.length === 0)) {
+      continue;
+    }
+    try {
+      const result = await syncYearZip(storage, status);
+      if (result.bytes > 0) {
+        built++;
+        builtBytes += result.bytes;
+        console.log(`  built ${status.key} (${formatBytes(result.bytes)})`);
+      }
+      deleted += result.deleted.length;
+      result.deleted.forEach((k) => console.log(`  deleted old ${k}`));
+    } catch (err) {
+      failed++;
+      console.error(`  FAILED: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  if (!confirm) {
+    console.log(
+      `\n${instances.length} year(s): ${toBuild} to build, ${upToDate} up to date.` +
+        `\nDry run -- nothing built or deleted. Re-run with --confirm to build.`
+    );
+    return;
+  }
+  console.log(
+    `\n${instances.length} year(s): ${built} built (${formatBytes(builtBytes)}), ${upToDate} already up to date,` +
+      ` ${deleted} old zip(s) deleted, ${failed} failed.`
+  );
+  if (failed > 0) process.exitCode = 1;
 }
 
 async function runPublish(args: ParsedArgs): Promise<void> {
@@ -433,27 +555,104 @@ async function runPublish(args: ParsedArgs): Promise<void> {
 
   const result = await publishArtifact(artifactId);
   if ("missing" in result) {
-    console.error(`Cannot publish ${artifactId} — rights record is missing: ${result.missing.join(", ")}`);
-    console.error(`Run "approve-rights ${artifactId} --basis ... --approved-by ... --evidence-uri ..." first.`);
+    console.error(`Cannot publish ${artifactId} — still needs:`);
+    result.missing.forEach((m) => console.error(`  - ${m}`));
+    console.error(
+      `Rights details are filled in with "approve-rights ${artifactId} --basis ... --approved-by ... --evidence-uri ...".`
+    );
     process.exitCode = 1;
     return;
   }
+  if (result.filesRestored > 0) {
+    console.log(`Moved ${result.filesRestored} stored file(s) back from quarantine to their original key.`);
+  }
   console.log(`Published "${result.title}" (${artifactId}).`);
+  const instance = await getArtifactInstance(artifactId);
+  if (instance) await printYearZipNotices([instance]);
 }
 
 const UNPUBLISH_STATUS_CHOICES: ArtifactStatus[] = ["withdrawn", "rights_hold"];
 
+function printQuarantineResult(result: QuarantineResult): void {
+  if (result.filesMoved > 0) {
+    console.log(
+      `Moved ${result.filesMoved} stored file(s) to quarantine -- download links already handed out stop working now.`
+    );
+  }
+  if (result.moveErrors.length > 0) {
+    console.error(
+      `WARNING: couldn't fully move ${result.moveErrors.length} stored file(s). The paper is unpublished and the site` +
+        `\nno longer hands it out, but a link handed out in the last 10 minutes can keep working until it expires:`
+    );
+    result.moveErrors.forEach((e) => console.error(`  ${e}`));
+    process.exitCode = 1;
+  }
+}
+
+const UNPUBLISH_USAGE =
+  "Usage: unpublish <artifact-id> [--status withdrawn|rights_hold] [--reason <text>] [--purge [--confirm]]";
+
 async function runUnpublish(args: ParsedArgs): Promise<void> {
   const artifactId = args.positional[0];
-  if (!artifactId) fail("Usage: unpublish <artifact-id> [--status withdrawn|rights_hold] [--reason <text>]");
+  if (!artifactId) fail(UNPUBLISH_USAGE);
+  const purge = args.flags.purge === "true";
+  if (args.flags.confirm && !purge) fail(`--confirm only applies to --purge.\n${UNPUBLISH_USAGE}`);
+  const reason = args.flags.reason ?? null;
 
   const status = (args.flags.status ?? "withdrawn") as ArtifactStatus;
   if (!UNPUBLISH_STATUS_CHOICES.includes(status)) {
     fail(`--status must be one of ${UNPUBLISH_STATUS_CHOICES.join(", ")}`);
   }
 
-  const result = await unpublishArtifact(artifactId, status as "withdrawn" | "rights_hold", args.flags.reason ?? null);
-  console.log(`Unpublished "${result.title}" (${artifactId}) -> ${status}.`);
+  // With --purge, a paper that's already unpublished just goes on to the
+  // purge step; without it, unpublishing it again is an error.
+  if (!purge || (await getArtifactStatus(artifactId)) === "published") {
+    const result = await unpublishArtifact(artifactId, status as "withdrawn" | "rights_hold", reason);
+    console.log(`Unpublished "${result.title}" (${artifactId}) -> ${status}.`);
+    printQuarantineResult(result);
+    if (result.zipsDeleted > 0) {
+      console.log(`Deleted ${result.zipsDeleted} "Download all" zip(s) of its year, which included it.`);
+    }
+    const instance = await getArtifactInstance(artifactId);
+    if (instance) await printYearZipNotices([instance]);
+  }
+  if (purge) await runPurge(artifactId, args.flags.confirm === "true", reason);
+}
+
+/**
+ * `unpublish --purge`: makes sure every file of the (now unpublished) paper
+ * is in quarantine, then lists what would be permanently deleted -- and,
+ * only with --confirm, deletes it (audit-logged as file_purged).
+ */
+async function runPurge(artifactId: string, confirm: boolean, reason: string | null): Promise<void> {
+  const plan = await prepareArtifactPurge(artifactId);
+  printQuarantineResult(plan.quarantine);
+  if (plan.quarantine.moveErrors.length > 0) {
+    console.error("\nNot purging: fix the files above first (they're not all in quarantine).");
+    return;
+  }
+  if (plan.files.length === 0) {
+    console.log(`\n"${plan.title}" has no stored files in quarantine -- nothing to purge.`);
+    return;
+  }
+
+  console.log(`\n${confirm ? "Permanently deleting" : "Would permanently delete"} ${plan.files.length} file(s):`);
+  plan.files.forEach((f) => console.log(`  ${f.storageKey}  (${formatBytes(f.bytes)})`));
+  if (!confirm) {
+    console.log(
+      `\nDry run -- nothing deleted (the file(s) stay in quarantine, recoverable by publishing again).` +
+        `\nTo delete permanently: unpublish ${artifactId} --purge --confirm`
+    );
+    return;
+  }
+
+  const result = await purgeArtifactFiles(artifactId, reason);
+  console.log(`\nPurged ${result.purged.length} file(s). Each is logged in audit_events as file_purged.`);
+  if (result.errors.length > 0) {
+    console.error(`WARNING: ${result.errors.length} file(s) not purged:`);
+    result.errors.forEach((e) => console.error(`  ${e}`));
+    process.exitCode = 1;
+  }
 }
 
 // --- list -------------------------------------------------------------------
@@ -468,6 +667,218 @@ async function runList(): Promise<void> {
     console.log(
       `${a.id}  ${String(a.year)}  ${a.subjectName.padEnd(16)}  ${a.artifactType.padEnd(15)}  ${(a.paperNumber ?? "—").padEnd(4)}  ${a.status.padEnd(18)}  ${a.rightsStatus.padEnd(28)}  ${a.hasFile ? "file" : "no file"}  ${a.title}`
     );
+  }
+}
+
+// --- rights-expiring --------------------------------------------------------
+
+async function runRightsExpiring(args: ParsedArgs): Promise<void> {
+  const days = Number(args.flags.days);
+  if (!args.flags.days || !Number.isInteger(days) || days < 0) {
+    fail("Usage: rights-expiring --days <N>   (N = a whole number of days, 0 or more)");
+  }
+
+  const entries = await listPublishedRightsExpiring(days);
+  const expired = entries.filter((e) => e.daysLeft < 0);
+  const upcoming = entries.filter((e) => e.daysLeft >= 0);
+
+  console.log(`Published papers whose rights expire within ${days} day${days === 1 ? "" : "s"} (${upcoming.length}):`);
+  if (upcoming.length === 0) console.log("  (none)");
+  for (const e of upcoming) {
+    const when = e.daysLeft === 0 ? "today (last valid day)" : `in ${e.daysLeft} day${e.daysLeft === 1 ? "" : "s"}`;
+    console.log(`  ${e.expiry}  ${when.padEnd(22)}  ${e.artifactId}  ${e.title}`);
+  }
+
+  console.log(`\nAlready expired -- published but now HIDDEN from the public site (${expired.length}):`);
+  if (expired.length === 0) console.log("  (none)");
+  for (const e of expired) {
+    const ago = `${-e.daysLeft} day${e.daysLeft === -1 ? "" : "s"} ago`;
+    console.log(`  ${e.expiry}  ${ago.padEnd(22)}  ${e.artifactId}  ${e.title}`);
+  }
+
+  const unapproved = await listPublishedWithUnapprovedRights();
+  console.log(`\nRights no longer approved -- published but now HIDDEN from the public site (${unapproved.length}):`);
+  if (unapproved.length === 0) console.log("  (none)");
+  for (const u of unapproved) {
+    console.log(`  ${(u.rightsStatus ?? "no rights record").padEnd(32)}  ${u.artifactId}  ${u.title}`);
+  }
+
+  if (expired.length > 0 || unapproved.length > 0) {
+    console.log(
+      "\nHidden papers stay hidden until their rights are approved again (approve-rights, with a new --expiry if" +
+        "\nneeded), or can be taken down properly with unpublish."
+    );
+  }
+}
+
+// --- R2 object headers -------------------------------------------------------
+
+// How long the presigned check link printed by inspect-object and
+// set-disposition stays valid.
+const PRESIGNED_CHECK_SECONDS = 300;
+
+const SHOWN_RESPONSE_HEADERS = [
+  "content-type",
+  "content-disposition",
+  "content-length",
+  "content-range",
+  "accept-ranges",
+  "etag",
+  "last-modified",
+  "cache-control",
+];
+
+function requireR2Storage(): R2Storage {
+  const storage = getStorageProvider();
+  if (!(storage instanceof R2Storage)) {
+    fail("This command only works with STORAGE_BACKEND=r2 (plus the R2_* settings) in .env.local.");
+  }
+  return storage;
+}
+
+async function findStoredFile(flags: Record<string, string>): Promise<StoredFile> {
+  const key = flags.key;
+  const fileId = flags["file-id"];
+  if (Boolean(key) === Boolean(fileId)) fail("Give exactly one of --key <storage-key> or --file-id <id>.");
+  const match = (await listStoredFiles()).find((f) => (key ? f.storageKey === key : f.fileId === fileId));
+  if (!match) fail(`No file record found for ${key ? `key "${key}"` : `file id ${fileId}`}.`);
+  return match;
+}
+
+function printStoredInfo(label: string, info: StoredObjectInfo | null): void {
+  console.log(`${label}:`);
+  if (!info) {
+    console.log("  (no object in R2 at this key)");
+    return;
+  }
+  console.log(`  Content-Type:        ${info.contentType ?? "(none)"}`);
+  console.log(`  Content-Disposition: ${info.contentDisposition ?? "(none)"}`);
+  console.log(`  Cache-Control:       ${info.cacheControl ?? "(none)"}`);
+  console.log(`  Content-Length:      ${info.contentLength ?? "?"}`);
+  console.log(`  ETag:                ${info.etag ?? "?"}`);
+  console.log(`  Last-Modified:       ${info.lastModified?.toISOString() ?? "?"}`);
+}
+
+/** Which of the three serving headers on a stored object differ from what they should be (empty = all correct). */
+function headersToChange(info: StoredObjectInfo, target: ServingHeaders): string[] {
+  const changes: string[] = [];
+  if (info.contentType !== target.contentType) changes.push("Content-Type");
+  if (info.contentDisposition !== target.contentDisposition) changes.push("Content-Disposition");
+  if (info.cacheControl !== target.cacheControl) changes.push("Cache-Control");
+  return changes;
+}
+
+/**
+ * Fetches the file through a real presigned R2 link -- exactly what a
+ * visitor's browser would be sent to -- and prints the headers R2 actually
+ * answers with. Asks for just the first byte (a Range request), so this
+ * check doesn't download the whole file.
+ */
+async function printPresignedResponse(storage: R2Storage, key: string): Promise<void> {
+  const url = await storage.presignedGetUrl(key, PRESIGNED_CHECK_SECONDS);
+  const response = await fetch(url, { headers: { Range: "bytes=0-0" } });
+  console.log("\nResponse from a presigned R2 link (GET, Range: bytes=0-0):");
+  console.log(`  HTTP ${response.status} ${response.statusText}`);
+  for (const name of SHOWN_RESPONSE_HEADERS) {
+    console.log(`  ${name}: ${response.headers.get(name) ?? "(not sent)"}`);
+  }
+  await response.body?.cancel();
+  console.log(`\nPresigned link, valid for ${PRESIGNED_CHECK_SECONDS / 60} minutes (to try in a browser):\n  ${url}`);
+}
+
+async function runInspectObject(args: ParsedArgs): Promise<void> {
+  const storage = requireR2Storage();
+  const file = await findStoredFile(args.flags);
+  console.log(`${file.title}\n  key: ${file.storageKey}\n  file id: ${file.fileId} (${file.status})\n`);
+  printStoredInfo("Stored in R2", await storage.describe(file.storageKey));
+  await printPresignedResponse(storage, file.storageKey);
+}
+
+async function runSetDispositionOne(storage: R2Storage, flags: Record<string, string>): Promise<void> {
+  const file = await findStoredFile(flags);
+  const target = pdfServingHeaders(file.title);
+  console.log(`${file.title}\n  key: ${file.storageKey}\n  file id: ${file.fileId} (${file.status})\n`);
+
+  const before = await storage.describe(file.storageKey);
+  printStoredInfo("Before", before);
+  if (!before) fail("Nothing to update.");
+  if (headersToChange(before, target).length === 0) {
+    console.log("\nAlready set -- no change made.");
+  } else {
+    printStoredInfo("\nAfter", await storage.setServingHeaders(file.storageKey, target));
+  }
+  await printPresignedResponse(storage, file.storageKey);
+}
+
+// How many of the objects that would change a dry run prints as examples.
+const DRY_RUN_SAMPLE_SIZE = 5;
+
+async function runSetDispositionAll(storage: R2Storage, confirm: boolean): Promise<void> {
+  // Several file records can't share a key in practice, but de-duplicate
+  // anyway so no object is rewritten twice.
+  const files = [...new Map((await listStoredFiles()).map((f) => [f.storageKey, f])).values()];
+  let alreadySet = 0;
+  let missing = 0;
+  let updated = 0;
+  let failed = 0;
+  const pending: { file: StoredFile; changes: string[] }[] = [];
+
+  for (const file of files) {
+    const info = await storage.describe(file.storageKey);
+    if (!info) {
+      missing++;
+      console.log(`MISSING  ${file.storageKey}`);
+      continue;
+    }
+    const changes = headersToChange(info, pdfServingHeaders(file.title));
+    if (changes.length === 0) alreadySet++;
+    else pending.push({ file, changes });
+  }
+
+  if (!confirm) {
+    console.log(
+      `${files.length} objects: ${pending.length} would be updated, ${alreadySet} already set, ${missing} missing from R2.`
+    );
+    if (pending.length > 0) {
+      console.log(`\nSample of what would be set (first ${Math.min(DRY_RUN_SAMPLE_SIZE, pending.length)}):`);
+      for (const { file, changes } of pending.slice(0, DRY_RUN_SAMPLE_SIZE)) {
+        console.log(`  ${generateDownloadFilename(file.title)}`);
+        console.log(`    key: ${file.storageKey}`);
+        console.log(`    changes: ${changes.join(", ")}`);
+      }
+      const target = pdfServingHeaders("example");
+      console.log(
+        `\nEvery updated object gets Content-Type: ${target.contentType}, Cache-Control: ${target.cacheControl},` +
+          `\nand Content-Disposition: inline with its own filename (ASCII filename + UTF-8 filename*).`
+      );
+    }
+    console.log("\nDry run -- nothing changed. Re-run with --confirm to update.");
+    return;
+  }
+
+  for (const { file } of pending) {
+    try {
+      await storage.setServingHeaders(file.storageKey, pdfServingHeaders(file.title));
+      updated++;
+      console.log(`UPDATED  ${file.storageKey}`);
+    } catch (err) {
+      failed++;
+      console.error(`FAILED   ${file.storageKey}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  console.log(
+    `\n${files.length} objects: ${updated} updated, ${alreadySet} already set, ${missing} missing from R2, ${failed} failed.`
+  );
+  if (failed > 0) process.exitCode = 1;
+}
+
+async function runSetDisposition(args: ParsedArgs): Promise<void> {
+  const storage = requireR2Storage();
+  if (args.flags.all) {
+    if (args.flags.key || args.flags["file-id"]) fail("--all can't be combined with --key or --file-id.");
+    await runSetDispositionAll(storage, args.flags.confirm === "true");
+  } else {
+    await runSetDispositionOne(storage, args.flags);
   }
 }
 
@@ -536,7 +947,7 @@ async function runCoverage(): Promise<void> {
     // multi-type breakdown, not just one of the four fixed labels), so it's
     // measured from every real cell in the column rather than from
     // COVERAGE_LABEL alone.
-    const colWidths = subjects.map((subject, i) => {
+    const colWidths = subjects.map((subject) => {
       const rendered = years.map((year) => {
         const cell = cellFor(series.code, year, subject.slug);
         return cell ? renderCell(cell) : COVERAGE_LABEL.missing;
@@ -616,7 +1027,9 @@ Commands:
   publish <artifact-id>
       Mark an artifact published. Refuses (and prints what's missing) if
       its rights record does not yet have basis, approved_by and
-      evidence_uri all set.
+      evidence_uri all set, or its stored file isn't there. A paper that
+      was unpublished has its file moved back from quarantine to its
+      original key first.
 
   publish --series <code> --year-range <yyyy-yyyy> [--confirm]
       Bulk form of publish: publishes every artifact in one exam series
@@ -628,13 +1041,57 @@ Commands:
       single <artifact-id>.
 
   unpublish <artifact-id> [--status withdrawn|rights_hold] [--reason <text>]
-      Take a published artifact back off the public site.
+      Take a published artifact back off the public site. Also moves its
+      stored file(s) to quarantine/<timestamp>/<original key> (bytes kept,
+      logged), so any download link already handed out stops working
+      immediately rather than when it expires (up to 10 minutes).
+      Publishing it again moves the file(s) back. Also deletes that year's
+      "Download all" zips (rebuild with build-zips).
+
+  unpublish <artifact-id> --purge [--confirm] [--reason <text>]
+      As above (or, for a paper that's already unpublished, just makes sure
+      its files are in quarantine), then lists the quarantined files that
+      would be PERMANENTLY deleted. Only with --confirm are they deleted --
+      each logged in audit_events as file_purged with its key, sha256 and
+      size. A purged paper can't be published again unless re-ingested.
 
   list
       List every artifact with its id, status and rights status.
 
   coverage
       Print the year x subject coverage matrix.
+
+  rights-expiring --days <N>
+      List published papers whose rights expire within N days (soonest
+      first), plus published papers already HIDDEN from the public site
+      because their rights expired or are no longer approved.
+
+  inspect-object (--key <storage-key> | --file-id <id>)
+      R2 only, read-only. Show the headers R2 has stored for one file, then
+      fetch it through a real presigned R2 link and show the headers R2
+      actually sends back (plus the link, to try in a browser).
+
+  set-disposition (--key <storage-key> | --file-id <id>)
+      R2 only. Set one file's stored serving headers, without changing its
+      bytes: Content-Type: application/pdf, Cache-Control: private,
+      max-age=600, and Content-Disposition: inline with its readable file
+      name (ASCII filename + UTF-8 filename*). Then show the before/after
+      headers and the presigned-link check. New ingests get these
+      automatically.
+
+  set-disposition --all [--confirm]
+      Same for every file in the database. Without --confirm this only
+      prints how many would change, with a few examples -- same
+      dry-run-by-default pattern as ingest.
+
+  build-zips (--series <code> --year <yyyy> | --all) [--confirm]
+      Build each year's "Download all" zip from the papers that are
+      servable right now, store it (R2 in production) and delete that
+      year's out-of-date zips. The website only ever hands out a zip that
+      exactly matches the current papers; until one is built, "Download
+      all" tells visitors it isn't ready yet. publish and unpublish say
+      when a year needs rebuilding. Years already up to date are skipped.
+      Dry run unless --confirm.
 `;
 
 async function main(): Promise<void> {
@@ -666,6 +1123,18 @@ async function main(): Promise<void> {
       break;
     case "coverage":
       await runCoverage();
+      break;
+    case "rights-expiring":
+      await runRightsExpiring(args);
+      break;
+    case "inspect-object":
+      await runInspectObject(args);
+      break;
+    case "set-disposition":
+      await runSetDisposition(args);
+      break;
+    case "build-zips":
+      await runBuildZips(args);
       break;
     case undefined:
     case "help":

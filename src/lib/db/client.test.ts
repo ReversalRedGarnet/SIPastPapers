@@ -3,14 +3,17 @@
  * using a hand-crafted function instead of a real database connection --
  * this is pure control-flow logic (how many times to retry, and for which
  * kinds of errors), so it doesn't need a real Postgres connection to test.
- * This file deliberately does not set DB_POOL_PROFILE, so getRetryBudget()
- * resolves to the "web" profile throughout, same as a real page load.
+ * This file clears DB_POOL_PROFILE (in case the shell set it), so
+ * getRetryBudget() resolves to the "web" profile throughout, same as a real
+ * page load.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { withRetry } from "./client";
 import { isTransientConnectionError } from "./transient-error";
+
+delete process.env.DB_POOL_PROFILE;
 
 function transientError(code: string): NodeJS.ErrnoException {
   const err = new Error(`simulated ${code}`) as NodeJS.ErrnoException;

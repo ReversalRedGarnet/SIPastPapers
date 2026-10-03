@@ -8,10 +8,11 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
 // feature) -- it means "make sure these styles are loaded wherever this
 // file is used." Since this is the root layout (see below), importing
 // them here loads them for the entire site, once.
+// Two weights only -- regular and semibold -- each font file is ~15 KB
+// that every visitor downloads. Anything styled bold (including <strong>
+// and headings) uses the 600 one; see globals.css.
 import "@fontsource/public-sans/latin-400.css";
-import "@fontsource/public-sans/latin-500.css";
 import "@fontsource/public-sans/latin-600.css";
-import "@fontsource/public-sans/latin-700.css";
 import "./globals.css";
 
 const DESCRIPTION =

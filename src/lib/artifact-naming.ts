@@ -233,6 +233,36 @@ export function generateDownloadFilename(title: string): string {
 }
 
 /**
+ * The `Content-Disposition` header value that tells a browser how to open
+ * a paper's PDF ("inline" = show it, "attachment" = save it) and what to
+ * name it, e.g.
+ *
+ *   inline; filename="SISC Level 1 Mathematics 2019 - Paper 1.pdf"; filename*=UTF-8''SISC%20Level%201%20...
+ *
+ * It carries the name twice (the RFC 6266 convention): `filename` is a
+ * plain-ASCII fallback any browser understands, and `filename*` is the
+ * exact name, percent-encoded as UTF-8, which modern browsers prefer.
+ */
+export function contentDispositionHeader(disposition: "inline" | "attachment", title: string): string {
+  return contentDispositionForFilename(disposition, generateDownloadFilename(title));
+}
+
+/** The same header for any file name, e.g. a year's zip ("Form 5 - Year 11 2019.zip"). */
+export function contentDispositionForFilename(disposition: "inline" | "attachment", filename: string): string {
+  // Anything outside printable ASCII becomes "_" in the fallback name.
+  // (sanitizeForFilename has already removed `"` and `\`, the two
+  // characters that would break out of the quotes.)
+  const asciiFilename = filename.replace(/[^\x20-\x7e]/g, "_");
+  // encodeURIComponent leaves ' ( ) * as they are, but the `filename*`
+  // format (RFC 5987) needs those encoded too.
+  const encodedFilename = encodeURIComponent(filename).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+  return `${disposition}; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`;
+}
+
+/**
  * Builds the part of the web address that identifies one exam paper
  * within its series/year/subject (e.g. "paper-1", "paper-1-marking-scheme").
  * There's no separate "slug" column stored in the database — it's always

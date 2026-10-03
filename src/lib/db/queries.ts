@@ -2,8 +2,16 @@ import { randomUUID, createHash } from "node:crypto";
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { query, queryOne, queryWithoutRetry, withTransaction } from "./client";
+import {
+  APPROVED_RIGHTS_STATUSES,
+  IS_CURRENT_FILE,
+  PUBLICLY_VISIBLE,
+  QUARANTINE_PREFIX,
+  SERVABLE,
+} from "./visibility";
+export { QUARANTINE_PREFIX } from "./visibility";
 import { listBrowseYears } from "@/lib/browse-years";
-import { getStorageProvider } from "@/lib/storage";
+import { getStorageProvider, StorageKeyExistsError, type StorageProvider } from "@/lib/storage";
 import { buildStorageKey } from "@/lib/storage/types";
 import {
   artifactSlug,
@@ -11,6 +19,9 @@ import {
   generateArtifactTitle,
   generateCanonicalFileName,
 } from "@/lib/artifact-naming";
+import { pdfServingHeaders } from "@/lib/storage/serving-headers";
+import { deleteYearZips } from "@/lib/year-zip";
+import { parseSearchQuery } from "@/lib/search-query";
 import type {
   ArtifactStatus,
   ArtifactType,
@@ -80,7 +91,10 @@ interface PublicArtifactRow extends ArtifactBaseRow {
   file_id: string | null;
   file_sha256: string | null;
   file_mime: string | null;
-  file_bytes: number | null;
+  // `bytes` is a bigint column, which the pg driver returns as a string
+  // (a bigint can be larger than a JavaScript number can hold exactly) --
+  // converted with Number() below; PDFs are nowhere near that size.
+  file_bytes: string | null;
   source_type: string | null;
   source_organization: string | null;
   source_attribution: string | null;
@@ -161,12 +175,15 @@ const PUBLIC_ARTIFACT_SELECT = `
   -- row. "lateral (...)" runs a small query-within-a-query separately for
   -- each artifact row, here to fetch just its single most recently added
   -- file (order by created_at desc limit 1) -- this is what a "subquery"
-  -- is: a query nested inside another query.
+  -- is: a query nested inside another query. Only a published paper's
+  -- file is shown: a "not yet recovered" placeholder that has somehow been
+  -- given one still lists as a placeholder (and the file route won't serve
+  -- it either -- see SERVABLE).
   left join lateral (
     select id, sha256, mime, bytes
     from files
-    where artifact_id = a.id
-    order by created_at desc
+    where artifact_id = a.id and a.status = 'published'
+    order by created_at desc, id desc
     limit 1
   ) f on true
   left join lateral (
@@ -216,7 +233,7 @@ function hydratePublicRecord(row: PublicArtifactRow): PublicExamRecord {
     // can't work that connection out on its own from the check alone.
     file:
       row.file_id !== null
-        ? { id: row.file_id, sha256: row.file_sha256!, mime: row.file_mime!, bytes: row.file_bytes! }
+        ? { id: row.file_id, sha256: row.file_sha256!, mime: row.file_mime!, bytes: Number(row.file_bytes) }
         : null,
     source:
       row.source_type !== null
@@ -273,7 +290,8 @@ export const listYears = cache(async (): Promise<number[]> => {
 
 // --- public reads ------------------------------------------------------
 
-const PUBLIC_STATUSES = "('published', 'not_yet_recovered')";
+// The visibility rules (approved rights, current file, quarantine, what's
+// servable / publicly visible) live in ./visibility, shared with the proxy.
 
 export interface ExamContentAvailability {
   /** Which exam series (e.g. "SIF3") have at least one paper visible to the public, in any year */
@@ -297,7 +315,7 @@ export const getExamContentAvailability = cache(async (): Promise<ExamContentAva
      from artifacts a
      join exam_instances ei on ei.id = a.exam_instance_id
      join exam_series es on es.id = ei.exam_series_id
-     where a.status in ${PUBLIC_STATUSES}`
+     where ${PUBLICLY_VISIBLE}`
   );
   const seriesWithContent = new Set<string>();
   const yearsWithContent = new Set<string>();
@@ -341,7 +359,7 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
   // actual instructions. `$${params.length}` below just calculates which
   // numbered blank to use next, based on how many params have been added
   // to the list so far.
-  const clauses: string[] = [`a.status in ${PUBLIC_STATUSES}`];
+  const clauses: string[] = [PUBLICLY_VISIBLE];
   const params: (string | number)[] = [];
 
   if (filters.series) {
@@ -367,17 +385,45 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
   // `undefined` instead of crashing by trying to call .trim() on nothing."
   const q = filters.q?.trim();
   if (q) {
-    params.push(`%${q}%`);
-    const p = `$${params.length}`;
-    clauses.push(`(a.title ilike ${p} or s.canonical_name ilike ${p} or es.name ilike ${p})`);
+    // The search box text, split into a year filter, an exam-series filter
+    // and words that must each match -- see src/lib/search-query.ts.
+    const search = parseSearchQuery(q);
+    if (search.years.length > 0) {
+      params.push(search.years.join(","));
+      clauses.push(`ei.year = any(string_to_array($${params.length}, ',')::int[])`);
+    }
+    if (search.seriesCodes.length > 0) {
+      params.push(search.seriesCodes.join(","));
+      clauses.push(`es.code = any(string_to_array($${params.length}, ','))`);
+    }
+    for (const group of search.termGroups) {
+      // Each word (or one of its short forms) must appear somewhere. The
+      // words only ever contain letters, digits, spaces and "&", so they
+      // can't carry LIKE wildcards.
+      const alternatives = group.map((term) => {
+        params.push(`%${term}%`);
+        const p = `$${params.length}`;
+        return `a.title ilike ${p} or s.canonical_name ilike ${p} or es.name ilike ${p}
+          or exists (select 1 from jsonb_array_elements_text(s.aliases) alias where alias ilike ${p})`;
+      });
+      clauses.push(`(${alternatives.join(" or ")})`);
+    }
   }
 
   return { clauses, params };
 }
 
+/**
+ * Results order: newest year first, then subject, then a fixed order
+ * within a subject (type, paper number, id) -- so every page of results
+ * lists papers in the same order and none repeat or go missing between
+ * pages.
+ */
+const PUBLIC_RESULTS_ORDER = "order by ei.year desc, s.canonical_name, a.type, a.paper_no nulls first, a.id";
+
 export const searchPublicArtifacts = cache(async (filters: PublicArtifactFilters): Promise<PublicExamRecord[]> => {
   const { clauses, params } = buildPublicArtifactFilterClauses(filters);
-  const sql = `${PUBLIC_ARTIFACT_SELECT} where ${clauses.join(" and ")} order by ei.year desc, s.canonical_name`;
+  const sql = `${PUBLIC_ARTIFACT_SELECT} where ${clauses.join(" and ")} ${PUBLIC_RESULTS_ORDER}`;
   const rows = await query<PublicArtifactRow>(sql, params);
   return rows.map(hydratePublicRecord);
 });
@@ -456,7 +502,7 @@ export async function searchPublicArtifactsPage(
   const dataParams = [...params, limit, offset];
   const [rows, countRows] = await Promise.all([
     query<PublicArtifactRow>(
-      `${PUBLIC_ARTIFACT_SELECT} where ${where} order by ei.year desc, s.canonical_name limit $${dataParams.length - 1} offset $${dataParams.length}`,
+      `${PUBLIC_ARTIFACT_SELECT} where ${where} ${PUBLIC_RESULTS_ORDER} limit $${dataParams.length - 1} offset $${dataParams.length}`,
       dataParams
     ),
     query<{ total: string }>(`select count(*) as total from (${PUBLIC_ARTIFACT_SELECT} where ${where}) sub`, params),
@@ -502,7 +548,7 @@ export const listPublicSubjectsForInstance = cache(async (
      join exam_instances ei on ei.id = a.exam_instance_id
      join exam_series es on es.id = ei.exam_series_id
      join subjects s on s.id = a.subject_id
-     where es.code = $1 and ei.year = $2 and a.status in ${PUBLIC_STATUSES}
+     where es.code = $1 and ei.year = $2 and ${PUBLICLY_VISIBLE}
      group by s.id
      order by s.canonical_name`,
     [seriesCode, year]
@@ -514,6 +560,8 @@ export interface DownloadableYearFile {
   fileId: string;
   storageKey: string;
   title: string;
+  /** The file's recorded fingerprint -- part of what names a year's prebuilt zip (src/lib/year-zip.ts). */
+  sha256: string;
 }
 
 /**
@@ -526,23 +574,53 @@ export const listPublishedFilesForInstance = cache(async (
   seriesCode: string,
   year: number
 ): Promise<DownloadableYearFile[]> => {
-  const rows = await query<{ file_id: string; storage_key: string; title: string }>(
-    `select f.id as file_id, f.storage_key, a.title
+  const rows = await query<{ file_id: string; storage_key: string; title: string; sha256: string }>(
+    `select f.id as file_id, f.storage_key, a.title, f.sha256
      from artifacts a
      join exam_instances ei on ei.id = a.exam_instance_id
      join exam_series es on es.id = ei.exam_series_id
      join files f on f.artifact_id = a.id
-     where es.code = $1 and ei.year = $2 and a.status = 'published'
+     where es.code = $1 and ei.year = $2 and ${SERVABLE} and ${IS_CURRENT_FILE}
      order by a.title`,
     [seriesCode, year]
   );
-  return rows.map((r) => ({ fileId: r.file_id, storageKey: r.storage_key, title: r.title }));
+  return rows.map((r) => ({ fileId: r.file_id, storageKey: r.storage_key, title: r.title, sha256: r.sha256 }));
 });
+
+/**
+ * Every exam series + year with at least one servable file -- the years
+ * that should have a prebuilt zip (see build-zips in scripts/cli.ts).
+ */
+export async function listServableYearInstances(): Promise<{ seriesCode: string; year: number }[]> {
+  const rows = await query<{ code: string; year: number }>(
+    `select distinct es.code, ei.year
+     from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     join exam_series es on es.id = ei.exam_series_id
+     join files f on f.artifact_id = a.id
+     where ${SERVABLE} and ${IS_CURRENT_FILE}
+     order by es.code, ei.year`
+  );
+  return rows.map((r) => ({ seriesCode: r.code, year: r.year }));
+}
+
+/** The exam series + year a paper belongs to (whatever its status), or undefined for an unknown id. */
+export async function getArtifactInstance(artifactId: string): Promise<{ seriesCode: string; year: number } | undefined> {
+  const row = await queryOne<{ code: string; year: number }>(
+    `select es.code, ei.year
+     from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     join exam_series es on es.id = ei.exam_series_id
+     where a.id = $1`,
+    [artifactId]
+  );
+  return row && { seriesCode: row.code, year: row.year };
+}
 
 /** Gets the most recently published exam papers, for the homepage's "Recently added" list. */
 export const listRecentPublicArtifacts = cache(async (limit: number): Promise<PublicExamRecord[]> => {
   const rows = await query<PublicArtifactRow>(
-    `${PUBLIC_ARTIFACT_SELECT} where a.status = 'published' order by a.published_at desc limit $1`,
+    `${PUBLIC_ARTIFACT_SELECT} where ${SERVABLE} order by a.published_at desc limit $1`,
     [limit]
   );
   return rows.map(hydratePublicRecord);
@@ -556,7 +634,7 @@ export const getPublicArtifactBySlug = cache(async (
 ): Promise<{ record: PublicExamRecord; related: PublicExamRecord[] } | undefined> => {
   const rows = await query<PublicArtifactRow>(
     `${PUBLIC_ARTIFACT_SELECT}
-     where a.status in ${PUBLIC_STATUSES} and es.code = $1 and ei.year = $2 and s.subject_code = $3`,
+     where ${PUBLICLY_VISIBLE} and es.code = $1 and ei.year = $2 and s.subject_code = $3`,
     [seriesCode, year, subjectSlug]
   );
 
@@ -584,7 +662,7 @@ export const listSubjectArtifacts = cache(async (
 ): Promise<PublicExamRecord[]> => {
   const rows = await query<PublicArtifactRow>(
     `${PUBLIC_ARTIFACT_SELECT}
-     where a.status in ${PUBLIC_STATUSES} and es.code = $1 and s.subject_code = $2
+     where ${PUBLICLY_VISIBLE} and es.code = $1 and s.subject_code = $2
      order by ei.year asc, a.type asc, a.paper_no asc nulls first`,
     [seriesCode, subjectSlug]
   );
@@ -765,6 +843,52 @@ export interface IngestArtifactResult {
   sha256: string;
 }
 
+function duplicateArtifactError(existingId: string): Error {
+  return new Error(
+    `An artifact already exists for this exam / subject / type / paper number (id ${existingId}). Edit the existing record instead of creating a duplicate.`
+  );
+}
+
+function sha256Hex(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Saves a newly ingested file to storage, never replacing anything that's
+ * already there (storage itself refuses -- see StorageKeyExistsError).
+ *
+ * The one case that's allowed through: the exact same bytes (same SHA-256)
+ * are already stored at this key. ingestArtifact has already confirmed no
+ * artifact uses this key, so that can only be a leftover from an earlier
+ * ingest of this same file that uploaded it and then failed before the
+ * database records were written. Reusing it is safe, and means simply
+ * re-running the ingest fixes things. Different bytes are refused.
+ */
+async function putWithoutOverwriting(
+  storageKey: string,
+  file: { buffer: Buffer; mime: string },
+  sha256: string,
+  title: string
+) {
+  const storage = getStorageProvider();
+  try {
+    // The headers R2 sends when the file is served straight from it: shown
+    // in the browser ("inline"), named after the paper's title, and kept by
+    // the visitor's browser for 10 minutes (see serving-headers.ts).
+    await storage.put(storageKey, file.buffer, { ...pdfServingHeaders(title), contentType: file.mime });
+  } catch (err) {
+    if (!(err instanceof StorageKeyExistsError)) throw err;
+    const existing = await storage.get(storageKey);
+    if (!existing || sha256Hex(existing) !== sha256) {
+      throw new Error(
+        `Storage already holds a different file at "${storageKey}", with no artifact record pointing to it ` +
+          `(probably left over from an earlier ingest that failed partway). Refusing to overwrite it — ` +
+          `check that stored file by hand before removing it.`
+      );
+    }
+  }
+}
+
 /**
  * Adds one exam paper file into the archive: fingerprints the file (so we
  * can detect duplicates later), saves it to storage, and creates its
@@ -794,13 +918,19 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
     paperNo: input.paperNo,
   });
 
-  // We save the file to storage BEFORE touching the database, and outside
-  // the database transaction. That way, if saving the file fails, nothing
-  // gets written to the database at all. The one downside: if the file
-  // saves fine but the database step afterwards fails, we end up with a
-  // "orphaned" file sitting in storage with no database record pointing
-  // to it. That's an acceptable trade-off for now — a future version could
-  // add a cleanup process to find and remove those leftover files.
+  // The order of the steps below matters:
+  //   1. Refuse a duplicate artifact BEFORE touching storage. Storage keys
+  //      are built from the paper's details, so a duplicate would map to
+  //      the very same key as the paper already in the archive -- checking
+  //      only after saving used to silently replace a published paper's
+  //      file, and then fail.
+  //   2. Save the file, outside the database transaction, never replacing
+  //      anything (see putWithoutOverwriting). If saving fails, nothing
+  //      gets written to the database at all.
+  //   3. Write the database records in one transaction, checking for a
+  //      duplicate once more in case one appeared in the meantime.
+  // If step 3 fails after step 2 worked, the file is left in storage with
+  // no record pointing to it; re-running the same ingest reuses it.
   //
   // `createHash("sha256").update(bytes).digest("hex")` runs the file's raw
   // bytes through the SHA-256 hashing algorithm, producing a short, fixed-
@@ -808,7 +938,7 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
   // string). The same file always produces the same hash, and changing
   // even one byte produces a completely different one -- useful here for
   // detecting duplicate uploads and confirming a file hasn't been altered.
-  const sha256 = createHash("sha256").update(input.file.buffer).digest("hex");
+  const sha256 = sha256Hex(input.file.buffer);
   const fileName = generateCanonicalFileName({
     examSeriesSlug: series.code,
     year: input.year,
@@ -823,7 +953,17 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
     artifactType: artifactTypeSlug(input.artifactType),
     fileName,
   });
-  await getStorageProvider().put(storageKey, input.file.buffer, input.file.mime);
+
+  const existing = await queryOne<{ id: string }>(
+    `select a.id from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     where ei.exam_series_id = $1 and ei.year = $2 and a.subject_id = $3 and a.type = $4
+       and ((a.paper_no is null and $5::text is null) or a.paper_no = $5::text)`,
+    [series.id, input.year, subject.id, input.artifactType, input.paperNo]
+  );
+  if (existing) throw duplicateArtifactError(existing.id);
+
+  await putWithoutOverwriting(storageKey, input.file, sha256, title);
 
   // `withTransaction(async () => {...})` (see src/lib/db/client.ts) takes a
   // function containing every database change that has to succeed or fail
@@ -860,11 +1000,7 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
          and ((paper_no is null and $4::text is null) or paper_no = $4::text)`,
       [examInstance.id, subject.id, input.artifactType, input.paperNo]
     );
-    if (duplicate) {
-      throw new Error(
-        `An artifact already exists for this exam / subject / type / paper number (id ${duplicate.id}). Edit the existing record instead of creating a duplicate.`
-      );
-    }
+    if (duplicate) throw duplicateArtifactError(duplicate.id);
 
     const artifactId = randomUUID();
     await query(
@@ -928,31 +1064,54 @@ export interface DownloadableFile {
 }
 
 /**
- * Only hands back a file if its exam paper is CURRENTLY published. We
- * check this fresh against the database every single time (nothing is
- * cached here), so that if a paper gets withdrawn or put on hold, its file
- * stops being downloadable immediately — not after some delay.
+ * Only hands back a file if its exam paper is CURRENTLY published with
+ * rights currently approved (see SERVABLE), and it's the paper's current
+ * file (see IS_CURRENT_FILE). We check this fresh against the database
+ * every single time (nothing is cached here), so that if a paper gets
+ * withdrawn, put on hold, or its rights lapse, /api/files stops handing
+ * out links to it immediately. (A link handed out just before stays valid
+ * until it expires -- see PRESIGNED_LINK_SECONDS.)
  */
 export async function getFileForDownload(fileId: string): Promise<DownloadableFile | undefined> {
   const row = await queryOne<{
     storage_key: string;
     mime: string;
-    bytes: number;
-    status: ArtifactStatus;
+    bytes: string;
     title: string;
   }>(
-    `select f.storage_key, f.mime, f.bytes, a.status, a.title
+    `select f.storage_key, f.mime, f.bytes, a.title
      from files f
      join artifacts a on a.id = f.artifact_id
-     where f.id = $1`,
+     where f.id = $1 and ${SERVABLE} and ${IS_CURRENT_FILE}`,
     [fileId]
   );
 
-  if (!row || row.status !== "published") return undefined;
-  return { storageKey: row.storage_key, mime: row.mime, bytes: row.bytes, title: row.title };
+  if (!row) return undefined;
+  return { storageKey: row.storage_key, mime: row.mime, bytes: Number(row.bytes), title: row.title };
 }
 
 // --- Handling reports from the public — corrections, takedown requests, etc. ---
+
+/**
+ * The public page address of a paper (e.g.
+ * "/exams/sisc-l1/2019/mathematics/paper-1"), or undefined if there's no
+ * such paper or it isn't public. Used by the report form to confirm a
+ * report is about a real, public paper, and to send the visitor back to it.
+ */
+export async function getPublicArtifactPath(artifactId: string): Promise<string | undefined> {
+  const row = await queryOne<{ type: ArtifactType; paper_no: string | null; year: number; series_code: string; subject_slug: string | null }>(
+    `select a.type, a.paper_no, ei.year, es.code as series_code, s.subject_code as subject_slug
+     from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     join exam_series es on es.id = ei.exam_series_id
+     join subjects s on s.id = a.subject_id
+     where a.id = $1 and ${PUBLICLY_VISIBLE}`,
+    [artifactId]
+  );
+  if (!row) return undefined;
+  const slug = artifactSlug({ artifactType: row.type, paperNo: row.paper_no });
+  return `/exams/${row.series_code}/${row.year}/${row.subject_slug ?? ""}/${slug}`;
+}
 
 export async function createIssue(input: {
   artifactId: string;
@@ -1007,6 +1166,28 @@ async function hydrateArtifactSummary(row: ArtifactBaseRow): Promise<ArtifactSum
     rightsStatus: rights?.rights_status ?? "unknown",
     hasFile: Number(fileCount?.n ?? 0) > 0,
   };
+}
+
+export interface StoredFile {
+  fileId: string;
+  storageKey: string;
+  title: string;
+  status: ArtifactStatus;
+}
+
+/**
+ * Every file record with its paper's title and status, regardless of
+ * whether the paper is public -- for the CLI's storage maintenance
+ * commands (e.g. set-disposition), never for public pages.
+ */
+export async function listStoredFiles(): Promise<StoredFile[]> {
+  const rows = await query<{ file_id: string; storage_key: string; title: string; status: ArtifactStatus }>(
+    `select f.id as file_id, f.storage_key, a.title, a.status
+     from files f
+     join artifacts a on a.id = f.artifact_id
+     order by f.storage_key`
+  );
+  return rows.map((r) => ({ fileId: r.file_id, storageKey: r.storage_key, title: r.title, status: r.status }));
 }
 
 export async function listAllArtifacts(): Promise<ArtifactSummary[]> {
@@ -1083,6 +1264,72 @@ export async function approveRights(
   });
 }
 
+export interface RightsExpiryEntry {
+  artifactId: string;
+  title: string;
+  /** "YYYY-MM-DD" */
+  expiry: string;
+  /** Days from today until the expiry date: 0 = expires today (still valid), negative = already expired. */
+  daysLeft: number;
+}
+
+/**
+ * Published papers whose rights expire within `days` days, plus any whose
+ * expiry date has already passed -- those are now hidden from the public
+ * site (see RIGHTS_CURRENTLY_APPROVED) even though still "published".
+ * Soonest first. For the CLI's rights-expiring command.
+ */
+export async function listPublishedRightsExpiring(days: number): Promise<RightsExpiryEntry[]> {
+  const rows = await query<{ id: string; title: string; expiry: string; days_left: number }>(
+    // Subtracting one date from another in Postgres gives a whole number of
+    // days; `$1::int` makes `current_date + $1` mean "that many days ahead".
+    `select a.id, a.title,
+            to_char(latest.expiry_date, 'YYYY-MM-DD') as expiry,
+            latest.expiry_date - current_date as days_left
+     from artifacts a
+     join lateral (
+       select rr.expiry_date
+       from rights_records rr
+       where rr.artifact_id = a.id
+       order by rr.created_at desc
+       limit 1
+     ) latest on true
+     where a.status = 'published'
+       and latest.expiry_date is not null
+       and latest.expiry_date <= current_date + $1::int
+     order by latest.expiry_date, a.title`,
+    [days]
+  );
+  return rows.map((r) => ({ artifactId: r.id, title: r.title, expiry: r.expiry, daysLeft: r.days_left }));
+}
+
+/**
+ * Published papers whose most recent rights record doesn't have an
+ * approved status (e.g. it was set to rights_hold or denied after
+ * publishing) -- also hidden from the public site despite being
+ * "published". For the CLI's rights-expiring command.
+ */
+export async function listPublishedWithUnapprovedRights(): Promise<
+  { artifactId: string; title: string; rightsStatus: RightsStatus | null }[]
+> {
+  const rows = await query<{ id: string; title: string; rights_status: RightsStatus | null }>(
+    `select a.id, a.title, latest.rights_status
+     from artifacts a
+     left join lateral (
+       select rr.rights_status
+       from rights_records rr
+       where rr.artifact_id = a.id
+       order by rr.created_at desc
+       limit 1
+     ) latest on true
+     where a.status = 'published'
+       and (latest.rights_status is null
+            or latest.rights_status not in (${APPROVED_RIGHTS_STATUSES.map((s) => `'${s}'`).join(", ")}))
+     order by a.title`
+  );
+  return rows.map((r) => ({ artifactId: r.id, title: r.title, rightsStatus: r.rights_status }));
+}
+
 export interface RightsGateStatus {
   satisfied: boolean;
   missing: string[];
@@ -1096,8 +1343,21 @@ export interface RightsGateStatus {
  * before actually publishing anything.
  */
 export async function checkRightsGate(artifactId: string): Promise<RightsGateStatus> {
-  const rights = await queryOne<{ basis: string | null; approved_by: string | null; evidence_uri: string | null }>(
-    "select basis, approved_by, evidence_uri from rights_records where artifact_id = $1 order by created_at desc limit 1",
+  const rights = await queryOne<{
+    basis: string | null;
+    approved_by: string | null;
+    evidence_uri: string | null;
+    rights_status: RightsStatus;
+    expiry: string | null;
+    expired: boolean;
+  }>(
+    // `to_char(...)` turns the date into plain "YYYY-MM-DD" text for the
+    // message below; `expiry_date < current_date` lets the database decide
+    // whether it has passed, using its own idea of "today".
+    `select basis, approved_by, evidence_uri, rights_status,
+            to_char(expiry_date, 'YYYY-MM-DD') as expiry,
+            coalesce(expiry_date < current_date, false) as expired
+     from rights_records where artifact_id = $1 order by created_at desc limit 1`,
     [artifactId]
   );
 
@@ -1108,6 +1368,12 @@ export async function checkRightsGate(artifactId: string): Promise<RightsGateSta
   if (!rights.basis) missing.push("basis");
   if (!rights.approved_by) missing.push("approved_by");
   if (!rights.evidence_uri) missing.push("evidence_uri");
+  // Each entry reads as "what's still needed", since that's how the CLI
+  // shows this list ("Cannot publish ... still needs: ...").
+  if (!APPROVED_RIGHTS_STATUSES.includes(rights.rights_status)) {
+    missing.push(`an approved rights_status (currently "${rights.rights_status}")`);
+  }
+  if (rights.expired) missing.push(`unexpired rights (expired ${rights.expiry})`);
   return { satisfied: missing.length === 0, missing };
 }
 
@@ -1115,7 +1381,8 @@ export async function checkRightsGate(artifactId: string): Promise<RightsGateSta
  * The only place in the whole app where a paper actually gets marked
  * "published". This does NOT approve the rights itself — it only checks
  * that `approveRights` has already been done (basis, approver, and
- * evidence all filled in), and refuses to publish otherwise, telling you
+ * evidence all filled in, an approved rights status, not expired -- see
+ * checkRightsGate), and refuses to publish otherwise, telling you
  * exactly what's still missing. Approving rights and publishing are kept
  * as two separate, deliberate steps on purpose, as a safety check.
  */
@@ -1127,20 +1394,59 @@ export async function checkRightsGate(artifactId: string): Promise<RightsGateSta
 // as seen in scripts/cli.ts) before reading either field, which is exactly
 // what makes this safer than, say, returning a title that's sometimes an
 // empty string to mean failure.
+//
+// A paper published again after `unpublish` first has its file(s) moved
+// back from quarantine to their original key (filesRestored), so it's
+// never served from a quarantine key. If that can't be done, it isn't
+// published.
 export async function publishArtifact(
   artifactId: string
-): Promise<{ title: string } | { missing: string[] }> {
-  const artifact = await queryOne<{ id: string; title: string; status: ArtifactStatus }>(
-    "select id, title, status from artifacts where id = $1",
-    [artifactId]
-  );
-  if (!artifact) throw new Error(`Unknown artifact: ${artifactId}`);
-  if (artifact.status === "published") return { title: artifact.title };
+): Promise<{ title: string; filesRestored: number } | { missing: string[] }> {
+  const current = await queryOne<{ status: ArtifactStatus }>("select status from artifacts where id = $1", [
+    artifactId,
+  ]);
+  if (!current) throw new Error(`Unknown artifact: ${artifactId}`);
+  // Checked here as well as below so a paper that can't be published
+  // anyway is refused before any stored file is moved.
+  if (current.status !== "published") {
+    const gate = await checkRightsGate(artifactId);
+    if (!gate.satisfied) return { missing: gate.missing };
+  }
 
-  const gate = await checkRightsGate(artifactId);
-  if (!gate.satisfied) return { missing: gate.missing };
+  const restore = await restoreQuarantinedFiles(artifactId);
+  if (restore.errors.length > 0) {
+    return { missing: restore.errors.map((e) => `its stored file back at its original key (${e})`) };
+  }
 
+  // The rights check and the status change happen inside one transaction,
+  // so the check can't go stale between being made and acted on.
   return withTransaction(async () => {
+    // `for update` locks this paper's row until the transaction finishes,
+    // so nothing else can change its status in the meantime.
+    const artifact = await queryOne<{ id: string; title: string; status: ArtifactStatus }>(
+      "select id, title, status from artifacts where id = $1 for update",
+      [artifactId]
+    );
+    if (!artifact) throw new Error(`Unknown artifact: ${artifactId}`);
+    if (artifact.status === "published") return { title: artifact.title, filesRestored: restore.restored };
+
+    const gate = await checkRightsGate(artifactId);
+    if (!gate.satisfied) return { missing: gate.missing };
+
+    // Never publish a paper whose current file isn't actually stored where
+    // its record says (e.g. purged), or is still in quarantine.
+    const file = await queryOne<{ storage_key: string }>(
+      "select storage_key from files where artifact_id = $1 order by created_at desc, id desc limit 1",
+      [artifactId]
+    );
+    if (!file) return { missing: ["a stored file (none is recorded)"] };
+    if (file.storage_key.startsWith(QUARANTINE_PREFIX)) {
+      return { missing: [`its stored file out of quarantine (still at ${file.storage_key})`] };
+    }
+    if (!(await getStorageProvider().exists(file.storage_key))) {
+      return { missing: [`its stored file (nothing is stored at ${file.storage_key})`] };
+    }
+
     const now = new Date().toISOString();
     await query("update artifacts set status = 'published', published_at = $1 where id = $2", [
       now,
@@ -1150,10 +1456,10 @@ export async function publishArtifact(
     await query(
       `insert into audit_events (id, actor_id, event_type, object_type, object_id, metadata)
        values ($1, null, 'artifact_published', 'artifact', $2, $3)`,
-      [randomUUID(), artifactId, JSON.stringify({})]
+      [randomUUID(), artifactId, JSON.stringify({ filesRestored: restore.restored })]
     );
 
-    return { title: artifact.title };
+    return { title: artifact.title, filesRestored: restore.restored };
   });
 }
 
@@ -1165,7 +1471,7 @@ export async function unpublishArtifact(
   artifactId: string,
   toStatus: Extract<ArtifactStatus, "withdrawn" | "rights_hold"> = "withdrawn",
   reason?: string | null
-): Promise<{ title: string }> {
+): Promise<{ title: string; zipsDeleted: number } & QuarantineResult> {
   const artifact = await queryOne<{ id: string; title: string; status: ArtifactStatus }>(
     "select id, title, status from artifacts where id = $1",
     [artifactId]
@@ -1175,7 +1481,7 @@ export async function unpublishArtifact(
     throw new Error(`Artifact ${artifactId} is not published (status: ${artifact.status}).`);
   }
 
-  return withTransaction(async () => {
+  await withTransaction(async () => {
     await query("update artifacts set status = $1 where id = $2", [toStatus, artifactId]);
 
     await query(
@@ -1183,7 +1489,334 @@ export async function unpublishArtifact(
        values ($1, null, 'artifact_unpublished', 'artifact', $2, $3)`,
       [randomUUID(), artifactId, JSON.stringify({ toStatus, reason: reason ?? null })]
     );
-
-    return { title: artifact.title };
   });
+
+  // From here on the site already refuses to hand the paper out. Moving
+  // its stored file(s) also cuts off any download link handed out in the
+  // last few minutes, which would otherwise keep working until it expired.
+  const quarantine = await quarantineArtifactFiles(artifactId);
+
+  // The same for its year's zip: every stored zip of that year may include
+  // this paper, so they're all deleted (rebuild with `build-zips`; until
+  // then the year's "Download all" says it isn't ready yet).
+  let zipsDeleted = 0;
+  const instance = await getArtifactInstance(artifactId);
+  if (instance) {
+    try {
+      zipsDeleted = (await deleteYearZips(getStorageProvider(), instance.seriesCode, instance.year)).length;
+    } catch (err) {
+      quarantine.moveErrors.push(
+        `${instance.seriesCode} ${instance.year} year zip: couldn't delete it: ${errorText(err)}`
+      );
+    }
+  }
+  return { title: artifact.title, ...quarantine, zipsDeleted };
+}
+
+export interface QuarantineResult {
+  /** How many stored files were moved to a quarantine key. */
+  filesMoved: number;
+  /**
+   * One message per file that couldn't be fully moved (the paper is
+   * unpublished regardless). Either way the file record still points at a
+   * key that exists; links to the old key keep working until they expire.
+   */
+  moveErrors: string[];
+}
+
+/**
+ * The key a file is moved to when its paper is unpublished:
+ * "quarantine/<UTC timestamp>/<original key>". The timestamp makes every
+ * unpublish use a fresh key, so a file is never refused for its
+ * quarantine key already being taken by an earlier unpublish.
+ */
+export function quarantineKeyFor(storageKey: string, now: Date = new Date()): string {
+  // e.g. "2026-10-01T11:53:59.123Z" -> "20261001T115359"
+  const stamp = now.toISOString().replace(/[-:]/g, "").slice(0, 15);
+  return `${QUARANTINE_PREFIX}${stamp}/${originalKeyFor(storageKey)}`;
+}
+
+/** The key a quarantined file came from (and goes back to if its paper is published again). Any other key is returned unchanged. */
+export function originalKeyFor(storageKey: string): string {
+  return storageKey.startsWith(QUARANTINE_PREFIX) ? storageKey.replace(/^quarantine\/[^/]+\//, "") : storageKey;
+}
+
+/** One stored file being moved to a new key -- see relocateStoredFile. */
+export interface FileRelocation {
+  fileId: string;
+  artifactId: string;
+  fromKey: string;
+  toKey: string;
+  /** The fingerprint recorded for the file, to recognise an identical copy already at `toKey`. */
+  sha256: string;
+  /** What audit_events records the move as. */
+  eventType: "file_quarantined" | "file_restored";
+}
+
+export type RelocationOutcome =
+  /** The file record now points at `toKey`. `leftoverKey`: the old copy, if it couldn't be deleted. */
+  | { moved: true; leftoverKey: string | null; note?: string }
+  /** The file record still points at a key that exists (`fromKey`, unless the error says otherwise). */
+  | { moved: false; error: string };
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Points a file record at its new key and logs it -- only if the record still points at the old key. */
+async function recordFileRelocation(move: FileRelocation): Promise<void> {
+  await withTransaction(async () => {
+    const updated = await query(
+      "update files set storage_key = $1 where id = $2 and storage_key = $3 returning id",
+      [move.toKey, move.fileId, move.fromKey]
+    );
+    if (updated.length !== 1) throw new Error(`file ${move.fileId} no longer points at ${move.fromKey}`);
+    await query(
+      `insert into audit_events (id, actor_id, event_type, object_type, object_id, metadata)
+       values ($1, null, $2, 'artifact', $3, $4)`,
+      [
+        randomUUID(),
+        move.eventType,
+        move.artifactId,
+        JSON.stringify({ fileId: move.fileId, from: move.fromKey, to: move.toKey }),
+      ]
+    );
+  });
+}
+
+/**
+ * Moves one stored file to a new key and points its file record there, in
+ * an order that keeps the record pointing at a key that exists at every
+ * moment -- even if the process dies part-way:
+ *   1. copy the file to the new key (the old copy is untouched);
+ *   2. repoint the record (only if it still points at the old key) and log
+ *      it, in one transaction;
+ *   3. only then delete the old copy.
+ * If step 2 fails, the record is read back to see which key it holds: still
+ * the old one -> the new copy is removed again, as if nothing happened; the
+ * new one (the commit went through after all) -> carry on with step 3;
+ * can't tell -> both copies are left in place, which is always safe. If
+ * step 3 fails, the record already points at the new key and the old copy
+ * is reported as left over.
+ *
+ * Running it again after a failure is safe: an identical copy (same
+ * sha256) already at the new key is used as-is.
+ *
+ * `recordMove` is step 2; only tests pass anything else, to make it fail.
+ */
+export async function relocateStoredFile(
+  storage: StorageProvider,
+  move: FileRelocation,
+  recordMove: (move: FileRelocation) => Promise<void> = recordFileRelocation
+): Promise<RelocationOutcome> {
+  let createdCopy = true;
+  try {
+    await storage.copy(move.fromKey, move.toKey);
+  } catch (err) {
+    if (!(err instanceof StorageKeyExistsError)) {
+      return { moved: false, error: `copying it to ${move.toKey} failed: ${errorText(err)}` };
+    }
+    const existing = await storage.get(move.toKey);
+    if (!existing || sha256Hex(existing) !== move.sha256) {
+      return { moved: false, error: `a different file is already stored at ${move.toKey}` };
+    }
+    createdCopy = false; // left by an earlier attempt -- same bytes, so use it
+  }
+
+  try {
+    await recordMove(move);
+  } catch (err) {
+    const recordedKey = await queryOne<{ storage_key: string }>("select storage_key from files where id = $1", [
+      move.fileId,
+    ])
+      .then((row) => row?.storage_key)
+      .catch(() => undefined);
+    if (recordedKey !== move.toKey) {
+      if (recordedKey === move.fromKey && createdCopy) await storage.delete(move.toKey).catch(() => {});
+      return {
+        moved: false,
+        error:
+          `updating its file record failed (${errorText(err)}); the record still points at ` +
+          (recordedKey ?? `an unknown key -- check files.id ${move.fileId}`),
+      };
+    }
+  }
+
+  try {
+    await storage.delete(move.fromKey);
+  } catch (err) {
+    return { moved: true, leftoverKey: move.fromKey, note: `the old copy couldn't be deleted: ${errorText(err)}` };
+  }
+  return { moved: true, leftoverKey: null };
+}
+
+/**
+ * Moves every stored file of an (already unpublished) paper that isn't
+ * already there to a quarantine key, and points its file records there.
+ * Download links are tied to a file's key, so this makes every link
+ * already handed out stop working immediately -- the "instant revoke".
+ * Nothing is deleted (see purgeArtifactFiles for that): the bytes are kept,
+ * each move is logged in audit_events, and publishing the paper again moves
+ * them back to their original keys.
+ */
+async function quarantineArtifactFiles(artifactId: string): Promise<QuarantineResult> {
+  const storage = getStorageProvider();
+  const files = await query<{ id: string; storage_key: string; sha256: string }>(
+    "select id, storage_key, sha256 from files where artifact_id = $1 and not starts_with(storage_key, $2)",
+    [artifactId, QUARANTINE_PREFIX]
+  );
+  let filesMoved = 0;
+  const moveErrors: string[] = [];
+  for (const file of files) {
+    const outcome = await relocateStoredFile(storage, {
+      fileId: file.id,
+      artifactId,
+      fromKey: file.storage_key,
+      toKey: quarantineKeyFor(file.storage_key),
+      sha256: file.sha256,
+      eventType: "file_quarantined",
+    });
+    if (!outcome.moved) {
+      moveErrors.push(`${file.storage_key}: ${outcome.error}`);
+      continue;
+    }
+    filesMoved++;
+    if (outcome.leftoverKey) moveErrors.push(`${file.storage_key}: quarantined, but ${outcome.note}`);
+  }
+  return { filesMoved, moveErrors };
+}
+
+/**
+ * Moves a paper's quarantined files back to their original keys -- the
+ * first step of publishing it again (see publishArtifact). A quarantine
+ * copy that can't be deleted afterwards is harmless (nothing points at it,
+ * and nothing under quarantine/ is ever served), so only failures to move
+ * a file back count as errors.
+ */
+async function restoreQuarantinedFiles(artifactId: string): Promise<{ restored: number; errors: string[] }> {
+  const files = await query<{ id: string; storage_key: string; sha256: string }>(
+    "select id, storage_key, sha256 from files where artifact_id = $1 and starts_with(storage_key, $2)",
+    [artifactId, QUARANTINE_PREFIX]
+  );
+  if (files.length === 0) return { restored: 0, errors: [] };
+
+  const storage = getStorageProvider();
+  let restored = 0;
+  const errors: string[] = [];
+  for (const file of files) {
+    const outcome = await relocateStoredFile(storage, {
+      fileId: file.id,
+      artifactId,
+      fromKey: file.storage_key,
+      toKey: originalKeyFor(file.storage_key),
+      sha256: file.sha256,
+      eventType: "file_restored",
+    });
+    if (outcome.moved) restored++;
+    else errors.push(`${file.storage_key}: ${outcome.error}`);
+  }
+  return { restored, errors };
+}
+
+/** A paper's status, or undefined if there's no such paper. */
+export async function getArtifactStatus(artifactId: string): Promise<ArtifactStatus | undefined> {
+  const row = await queryOne<{ status: ArtifactStatus }>("select status from artifacts where id = $1", [artifactId]);
+  return row?.status;
+}
+
+export interface PurgeCandidate {
+  fileId: string;
+  storageKey: string;
+  bytes: number;
+}
+
+/**
+ * The first half of `unpublish --purge`, for a paper that's already
+ * unpublished (unpublishArtifact does this itself for a published one):
+ * quarantines any of its files that aren't yet, and lists every
+ * quarantined file -- what purgeArtifactFiles would permanently delete.
+ */
+export async function prepareArtifactPurge(
+  artifactId: string
+): Promise<{ title: string; quarantine: QuarantineResult; files: PurgeCandidate[] }> {
+  const artifact = await queryOne<{ title: string; status: ArtifactStatus }>(
+    "select title, status from artifacts where id = $1",
+    [artifactId]
+  );
+  if (!artifact) throw new Error(`Unknown artifact: ${artifactId}`);
+  if (artifact.status === "published") {
+    throw new Error(`Artifact ${artifactId} is published -- unpublish it before purging its files.`);
+  }
+  const quarantine = await quarantineArtifactFiles(artifactId);
+  const files = await query<{ id: string; storage_key: string; bytes: string }>(
+    `select id, storage_key, bytes from files
+     where artifact_id = $1 and starts_with(storage_key, $2) order by storage_key`,
+    [artifactId, QUARANTINE_PREFIX]
+  );
+  return {
+    title: artifact.title,
+    quarantine,
+    files: files.map((f) => ({ fileId: f.id, storageKey: f.storage_key, bytes: Number(f.bytes) })),
+  };
+}
+
+/**
+ * Permanently deletes an unpublished paper's quarantined files -- the
+ * second half of `unpublish --purge --confirm`. Each file is deleted from
+ * storage, its file record removed and a `file_purged` audit event
+ * (keeping its key, sha256, size and type) written, with the paper's row
+ * locked so it can't be published again part-way. Only quarantined files
+ * of a paper that isn't published are ever touched. Once purged, the paper
+ * can't be published again (it has no file) unless re-ingested.
+ */
+export async function purgeArtifactFiles(
+  artifactId: string,
+  reason: string | null = null
+): Promise<{ purged: PurgeCandidate[]; errors: string[] }> {
+  const storage = getStorageProvider();
+  const candidates = await query<{ id: string }>(
+    "select id from files where artifact_id = $1 and starts_with(storage_key, $2) order by storage_key",
+    [artifactId, QUARANTINE_PREFIX]
+  );
+  const purged: PurgeCandidate[] = [];
+  const errors: string[] = [];
+  for (const { id } of candidates) {
+    try {
+      const done = await withTransaction(async () => {
+        const artifact = await queryOne<{ status: ArtifactStatus }>(
+          "select status from artifacts where id = $1 for update",
+          [artifactId]
+        );
+        if (artifact?.status === "published") throw new Error("the paper has been published again");
+        const file = await queryOne<{ storage_key: string; sha256: string; mime: string; bytes: string }>(
+          "select storage_key, sha256, mime, bytes from files where id = $1 for update",
+          [id]
+        );
+        if (!file || !file.storage_key.startsWith(QUARANTINE_PREFIX)) return null; // moved since -- leave it
+        await storage.delete(file.storage_key);
+        await query("delete from files where id = $1", [id]);
+        await query(
+          `insert into audit_events (id, actor_id, event_type, object_type, object_id, metadata)
+           values ($1, null, 'file_purged', 'artifact', $2, $3)`,
+          [
+            randomUUID(),
+            artifactId,
+            JSON.stringify({
+              fileId: id,
+              key: file.storage_key,
+              sha256: file.sha256,
+              mime: file.mime,
+              bytes: Number(file.bytes),
+              reason,
+            }),
+          ]
+        );
+        return { fileId: id, storageKey: file.storage_key, bytes: Number(file.bytes) };
+      });
+      if (done) purged.push(done);
+    } catch (err) {
+      errors.push(`file ${id}: ${errorText(err)}`);
+    }
+  }
+  return { purged, errors };
 }

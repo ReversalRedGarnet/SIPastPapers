@@ -1,0 +1,94 @@
+# Runs on every pull request, every push to main, and on demand (Actions tab
+# -> CI -> Run workflow). See README "Continuous integration" for the two
+# secrets the database job needs.
+#
+# Nothing here has R2 credentials or the real database's connection string:
+# the database tests and the build use a Neon test branch, and every test
+# uses local file storage (src/lib/db/test-database-env.ts refuses to run
+# otherwise).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, typecheck, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm run test:unit
+
+  database:
+    name: Database tests and build (Neon test branch)
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # One run at a time across all branches, since they share one test
+    # branch: others queue. (A newer push to the same branch still cancels
+    # the run above; a test cut off mid-way is rolled back by Postgres.)
+    concurrency:
+      group: neon-test-branch
+      cancel-in-progress: false
+    env:
+      # A Neon *branch's* pooled connection string -- never the real database.
+      TEST_DATABASE_URL_POOLED: ${{ secrets.TEST_DATABASE_URL_POOLED }}
+      # The real database's host name, so the tests can refuse to run if the
+      # branch string above ever points at it (there's no .env.local here).
+      PRODUCTION_DATABASE_HOST: ${{ secrets.PRODUCTION_DATABASE_HOST }}
+    steps:
+      # Secrets aren't available to pull requests from forks, or before
+      # they're set up: then this job passes with a warning instead.
+      - name: Check the test database is configured
+        id: configured
+        run: |
+          if [ -n "$TEST_DATABASE_URL_POOLED" ] && [ -n "$PRODUCTION_DATABASE_HOST" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::TEST_DATABASE_URL_POOLED / PRODUCTION_DATABASE_HOST secrets not set -- database tests and build skipped."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.configured.outputs.ok == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.configured.outputs.ok == 'true'
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+        if: steps.configured.outputs.ok == 'true'
+      # Every test's writes are rolled back; the row counts before and after
+      # prove nothing was left behind on the shared branch.
+      - name: Database tests
+        if: steps.configured.outputs.ok == 'true'
+        run: |
+          printf 'DATABASE_URL_POOLED=%s\n' "$TEST_DATABASE_URL_POOLED" > .env.test.local
+          npx tsx scripts/test-db-rows.ts > "$RUNNER_TEMP/rows-before.json"
+          npm run test:db
+          npx tsx scripts/test-db-rows.ts --compare "$RUNNER_TEMP/rows-before.json"
+      # The build reads the database to pre-render the browse pages; it
+      # writes nothing.
+      - name: Build
+        if: steps.configured.outputs.ok == 'true'
+        run: npm run build
+        env:
+          DATABASE_URL_POOLED: ${{ secrets.TEST_DATABASE_URL_POOLED }}
+          DB_POOL_PROFILE: cli

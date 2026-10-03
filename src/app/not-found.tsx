@@ -29,7 +29,7 @@ export default function NotFound() {
             <label htmlFor="q" className="visually-hidden">
               Search
             </label>
-            <input type="search" id="q" name="q" placeholder="e.g. Mathematics 2018" style={{ maxWidth: "none" }} />
+            <input type="search" id="q" name="q" placeholder="e.g. Year 11 maths 2018" style={{ maxWidth: "none" }} />
           </div>
           <button type="submit">Search</button>
         </form>
@@ -37,7 +37,7 @@ export default function NotFound() {
 
       <p className="hint" style={{ marginTop: "1.5rem" }}>
         Or <Link href="/">return to the homepage</Link> or{" "}
-        <Link href="/browse">browse the archive</Link>.
+        <Link prefetch={false} href="/browse">browse the archive</Link>.
       </p>
     </>
   );

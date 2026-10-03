@@ -118,17 +118,20 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
             <label htmlFor="q" className="visually-hidden">
               Search
             </label>
-            <input type="search" id="q" name="q" defaultValue={filters.q ?? ""} placeholder="Search papers" />
+            <input type="search" id="q" name="q" defaultValue={filters.q ?? ""} placeholder="e.g. Year 11 maths 2018" />
           </div>
           <button type="submit">Search</button>
         </div>
 
+        <p id="filter-hint" className="visually-hidden">
+          Choosing a filter updates the results. With a keyboard, press Enter to apply it.
+        </p>
         <div className="search-form__filters field">
           <div>
             <label htmlFor="series" className="visually-hidden">
               Exam level
             </label>
-            <AutoSubmitSelect id="series" name="series" defaultValue={filters.series ?? ""}>
+            <AutoSubmitSelect id="series" name="series" defaultValue={filters.series ?? ""} aria-describedby="filter-hint">
               <option value="">Any exam level</option>
               {examSeries.map((s) => (
                 <option key={s.code} value={s.code}>
@@ -141,7 +144,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
             <label htmlFor="year" className="visually-hidden">
               Year
             </label>
-            <AutoSubmitSelect id="year" name="year" defaultValue={filters.year ?? ""}>
+            <AutoSubmitSelect id="year" name="year" defaultValue={filters.year ?? ""} aria-describedby="filter-hint">
               <option value="">Any year</option>
               {years.map((y) => (
                 <option key={y} value={y}>
@@ -154,7 +157,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
             <label htmlFor="subject" className="visually-hidden">
               Subject
             </label>
-            <AutoSubmitSelect id="subject" name="subject" defaultValue={filters.subject ?? ""}>
+            <AutoSubmitSelect id="subject" name="subject" defaultValue={filters.subject ?? ""} aria-describedby="filter-hint">
               <option value="">Any subject</option>
               {subjects.map((s) => (
                 <option key={s.id} value={s.subjectCode ?? s.id}>
@@ -182,7 +185,7 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
       {total === 0 ? (
         <p className="empty-state">
           No published papers match those filters yet. Try clearing a filter
-          or <Link href="/browse">browse what&apos;s available</Link>.
+          or <Link prefetch={false} href="/browse">browse what&apos;s available</Link>.
         </p>
       ) : records.length === 0 ? (
         // There ARE matching results overall, but this specific page has
@@ -196,6 +199,9 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
         </p>
       ) : (
         <>
+          <p className="hint">
+            Open PDF opens a paper in your browser. To keep a copy, use your browser&apos;s download or share button.
+          </p>
           <div className="data-table table-scroll">
             <table>
               <caption className="visually-hidden">Matching exam papers</caption>
@@ -223,6 +229,10 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                   const typeLabel = variant
                     ? `${artifactTypeLabel(r.artifactType)} (${variant})`
                     : artifactTypeLabel(r.artifactType);
+                  // Every row has a "View" and an "Open PDF": the hidden
+                  // text names the paper, so a screen reader's list of
+                  // links tells them apart.
+                  const paperName = `${r.subject} ${r.year} ${typeLabel}, ${seriesDisplayLabel(r.examSeriesCode)}`;
                   return (
                     <tr key={r.id}>
                       <td data-label="Year">{r.year}</td>
@@ -230,13 +240,18 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
                       <td data-label="Type">{typeLabel}</td>
                       <td data-label="Exam level">{seriesDisplayLabel(r.examSeriesCode)}</td>
                       <td>
-                        <Link href={href}>View</Link>
-                        {r.file && (
-                          <>
-                            {" · "}
-                            <a href={`/api/files/${r.file.id}?dl=1`}>Download ({formatBytes(r.file.bytes)})</a>
-                          </>
-                        )}
+                        <div className="row-actions">
+                          {/* No prefetching: a page of results is up to 25 of these. */}
+                          <Link href={href} className="table-action" prefetch={false}>
+                            View<span className="visually-hidden"> {paperName}</span>
+                          </Link>
+                          {r.file && (
+                            <a href={`/api/files/${r.file.id}`} className="table-action">
+                              Open PDF ({formatBytes(r.file.bytes)})
+                              <span className="visually-hidden"> {paperName}</span>
+                            </a>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

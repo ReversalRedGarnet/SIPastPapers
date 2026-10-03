@@ -1,153 +1,129 @@
 import { Readable } from "node:stream";
-import { finished } from "node:stream/promises";
-import { NextResponse } from "next/server";
-import { ZipArchive } from "archiver";
-import pLimit from "p-limit";
-import { listPublishedFilesForInstance, type DownloadableYearFile } from "@/lib/db/queries";
-import { getStorageProvider, type StorageProvider } from "@/lib/storage";
-import { generateDownloadFilename, sanitizeForFilename } from "@/lib/artifact-naming";
+import { NextResponse, type NextRequest } from "next/server";
+import { listPublishedFilesForInstance } from "@/lib/db/queries";
+import { getStorageProvider } from "@/lib/storage";
+import { PRESIGNED_LINK_SECONDS } from "@/lib/storage/serving-headers";
+import { yearZipKey, yearZipServingHeaders } from "@/lib/year-zip";
 import { seriesDisplayLabel } from "@/lib/format";
+import { identifyVisitor, rateLimit, VISITOR_COOKIE } from "@/lib/rate-limit";
+import { rateLimitedResponse, withVisitorCookie } from "@/lib/rate-limit-response";
+import { escapeHtml, noticePage, wantsHtml } from "@/lib/notice-page";
+import { logEvent, visitorLogFields } from "@/lib/log";
 
 /**
- * The most files we'll read from storage at the same time. The zip
- * builder always writes its entries in a fixed order regardless (fully
- * finishing one file before starting the next), so this setting doesn't
- * actually make the reading or writing faster. What it does do is limit
- * how many storage requests can be open at once for a year with lots of
- * files, instead of firing off a request for every single file all at once.
+ * The "Download all" button on a year's browse page: every servable paper
+ * for one exam series and year, as one zip.
+ *
+ * The zip is never built here. The CLI builds it ahead of time
+ * (`build-zips`) and stores it in R2; on every request this route:
+ *
+ *   1. checks the visitor's allowance (src/lib/rate-limit.ts),
+ *   2. lists, fresh from the database, the files of that year that may be
+ *      served right now (published, rights currently approved, current
+ *      file -- the same rule as for single PDFs),
+ *   3. works out the key of the zip holding exactly those files (see
+ *      src/lib/year-zip.ts) and, if it's stored, sends the browser on to a
+ *      temporary link to it, valid for 10 minutes.
+ *
+ * So the 20-40 MB never pass through the app, and a zip that includes a
+ * paper no longer allowed (or misses one just added) is never handed out:
+ * its key no longer matches. If the matching zip hasn't been built yet,
+ * the visitor gets a 503 explaining that, and it's logged.
+ *
+ * With local storage (development) the stored zip is streamed through this
+ * route instead.
  */
-const READ_CONCURRENCY = 4;
 
-/**
- * Streams one file from storage directly into the zip archive, and only
- * finishes once the file has been fully read into the archive (not just
- * queued up to be read) — that's what makes the concurrency limit above
- * actually meaningful, rather than something that frees up again the
- * instant a file is merely queued. If the file has somehow gone missing
- * from storage (a mismatch between the database and storage), this simply
- * skips it and logs a warning, rather than treating it as a fatal error —
- * matching how the earlier version of this feature behaved.
- */
-async function appendFile(storage: StorageProvider, archive: ZipArchive, file: DownloadableYearFile): Promise<void> {
-  const stream = await storage.getStream(file.storageKey);
-  if (!stream) {
-    console.warn(`[download-year] skipping ${file.storageKey}: missing from storage`);
-    return;
-  }
-  archive.append(stream, { name: generateDownloadFilename(file.title) });
-  await finished(stream);
+const NO_STORE = "private, no-store";
+
+/** Matches how long a visitor is told to wait before trying again. */
+const NOT_READY_RETRY_AFTER_SECONDS = 3600;
+
+function notFound(): NextResponse {
+  return new NextResponse("Not found", { status: 404, headers: { "Cache-Control": NO_STORE } });
 }
 
-/**
- * Bundles up every published exam paper for one exam series and year into
- * a single zip file, for the "Download all" button on the year browse
- * page. This needs to run on a regular Node.js server (not the lighter
- * "Edge" runtime), since building a zip file requires Node's tools.
- *
- * Each file streams straight from storage into its spot in the zip — at
- * no point is an entire file, or the whole finished zip, held all at once
- * in memory. The zip data flows directly into the response as it's
- * produced.
- */
+function zipNotReadyResponse(request: NextRequest, seriesCode: string, year: number): NextResponse {
+  const label = `${seriesDisplayLabel(seriesCode)} ${year}`;
+  const headers = { "Retry-After": String(NOT_READY_RETRY_AFTER_SECONDS), "Cache-Control": NO_STORE };
+  if (wantsHtml(request)) {
+    const html = noticePage(
+      request,
+      "Download not ready yet",
+      `The zip of all ${escapeHtml(label)} papers isn&#39;t ready yet`,
+      `<p>The papers for this year were updated recently, and the download of all of them together is still being prepared.</p>
+  <p><strong>Please try again later.</strong> In the meantime, every paper can still be opened one at a time from the year&#39;s page.</p>`
+    );
+    return new NextResponse(html, { status: 503, headers: { ...headers, "Content-Type": "text/html; charset=utf-8" } });
+  }
+  return NextResponse.json(
+    { error: `The zip of all ${label} papers isn't ready yet. Please try again later.` },
+    { status: 503, headers }
+  );
+}
+
 export async function GET(
-  _request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ series: string; year: string }> }
 ) {
+  const startedAt = Date.now();
   const { series: seriesCode, year: yearParam } = await params;
+  const visitor = identifyVisitor(request.cookies.get(VISITOR_COOKIE)?.value, request.headers.get("x-forwarded-for"));
+  const logFields = { series: seriesCode, year: yearParam, ...visitorLogFields(visitor, request.headers.get("user-agent")) };
   const year = Number(yearParam);
-  if (!Number.isInteger(year)) {
-    return new NextResponse("Not found", { status: 404 });
+  if (!/^\d{4}$/.test(yearParam)) {
+    return withVisitorCookie(notFound(), visitor);
+  }
+
+  // A whole year is the biggest thing this site hands out, so it has the
+  // smallest allowance (see src/lib/rate-limit.ts). Downloading the same
+  // year again (e.g. retrying a failed download) counts once.
+  const limit = rateLimit("zip", visitor, `${seriesCode}/${year}`);
+  if (!limit.allowed) {
+    logEvent("rate_limited", { bucket: "zip", scope: limit.scope, retryAfterSeconds: limit.retryAfterSeconds, ...logFields });
+    return withVisitorCookie(rateLimitedResponse(request, limit), visitor);
   }
 
   const files = await listPublishedFilesForInstance(seriesCode, year);
   if (files.length === 0) {
-    return new NextResponse("Not found", { status: 404 });
+    logEvent("zip", { outcome: "not_found", ...logFields });
+    return withVisitorCookie(notFound(), visitor);
   }
 
   const storage = getStorageProvider();
+  const key = yearZipKey(seriesCode, year, files);
 
-  // We check this BEFORE starting to build and send the response below —
-  // not after. Once that streaming response has started, its status code
-  // and headers are already locked in and sent to the visitor's browser,
-  // so there's no way to go back and turn a "success" response into an
-  // error after discovering partway through that nothing actually got
-  // added to the zip. Without this check, if every file for this exam
-  // series and year had somehow gone missing from storage while the
-  // database still listed them as published (a genuine mismatch between
-  // the database and storage — not the normal "no papers yet" situation),
-  // the visitor would get back what looks like a successful download, but
-  // is actually an empty, useless zip file, with no visible error at all.
-  const existence = await Promise.all(files.map((file) => storage.exists(file.storageKey)));
-  // `.filter()`'s callback can optionally take a second parameter -- the
-  // item's position in the list -- alongside the item itself. This filter
-  // doesn't need the item, only its position (to check the matching
-  // true/false in `existence`), so the item parameter is named `_` by
-  // convention, a common way to signal "this parameter is required to be
-  // here, but intentionally unused."
-  const availableFiles = files.filter((_, i) => existence[i]);
-  if (availableFiles.length === 0) {
-    console.error(
-      `[download-year] every published file for ${seriesCode}/${year} is missing from storage (${files.length} expected)`
-    );
-    return new NextResponse(
-      "This year's papers are temporarily unavailable. Please try again later or report the issue.",
-      { status: 500 }
-    );
+  if (!(await storage.exists(key))) {
+    // Not counted against the visitor: nothing was handed out.
+    logEvent("zip", { outcome: "not_built", key, files: files.length, ms: Date.now() - startedAt, ...logFields });
+    return withVisitorCookie(zipNotReadyResponse(request, seriesCode, year), visitor);
   }
 
-  const archive = new ZipArchive({ zlib: { level: 6 } });
+  if (storage.presignedGetUrl) {
+    const url = await storage.presignedGetUrl(key, PRESIGNED_LINK_SECONDS);
+    limit.record();
+    logEvent("zip", { outcome: "redirect", key, files: files.length, ms: Date.now() - startedAt, ...logFields });
+    return withVisitorCookie(NextResponse.redirect(url, { status: 302, headers: { "Cache-Control": NO_STORE } }), visitor);
+  }
 
-  // A genuine storage failure while building the zip (not the "soft"
-  // missing-file case already handled inside appendFile above) cancels
-  // the whole download, rather than quietly producing a zip that looks
-  // complete but is secretly missing content. Deliberately failing the
-  // archive here makes the download connection end with an error, so the
-  // visitor sees a failed download rather than getting a corrupted file
-  // that appears fine.
-  //
-  // Every other Promise in this project comes from calling an already-
-  // `async` function and using `await` on the result. This is the other,
-  // rarer way to get one: `new Promise((resolve, reject) => {...})` builds
-  // a brand-new Promise from scratch, out of something that isn't already
-  // promise-based (here, an event -- `archive.once("error", ...)`).
-  // Whoever eventually calls `reject(someError)` is what makes *this*
-  // Promise fail, which is what lets it be awaited/raced against below.
-  const archiveError = new Promise<never>((_, reject) => {
-    archive.once("error", reject);
-  });
-
-  // `(async () => { ... })()` defines a function and calls it immediately,
-  // all in one expression -- sometimes called an "IIFE" (Immediately
-  // Invoked Function Expression). It's used here because this code needs
-  // to keep running in the background (appending files) while the actual
-  // GET function below returns its streaming response right away, without
-  // waiting for the zip to finish first.
-  (async () => {
-    try {
-      const limit = pLimit(READ_CONCURRENCY);
-      // `Promise.race([...])` -- unlike `Promise.all` (see
-      // src/app/page.tsx), which waits for every promise to finish --
-      // continues as soon as the *first* one settles, whichever that is.
-      // Here: either every file finishes appending, or the archive reports
-      // an error, whichever happens first.
-      await Promise.race([
-        Promise.all(availableFiles.map((file) => limit(() => appendFile(storage, archive, file)))),
-        archiveError,
-      ]);
-      await archive.finalize();
-    } catch (err) {
-      archive.destroy(err instanceof Error ? err : new Error(String(err)));
-    }
-  })();
-
-  const zipFilename = `${sanitizeForFilename(seriesDisplayLabel(seriesCode))} ${year}.zip`;
-
-  return new NextResponse(Readable.toWeb(archive) as ReadableStream<Uint8Array>, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="${zipFilename}"`,
-      "Cache-Control": "no-store",
-    },
-  });
+  // Local storage: stream the stored zip through this route.
+  const stream = await storage.getStream(key);
+  if (!stream) {
+    logEvent("zip", { outcome: "not_built", key, files: files.length, ms: Date.now() - startedAt, ...logFields });
+    return withVisitorCookie(zipNotReadyResponse(request, seriesCode, year), visitor);
+  }
+  limit.record();
+  logEvent("zip", { outcome: "streamed", key, files: files.length, ms: Date.now() - startedAt, ...logFields });
+  const headers = yearZipServingHeaders(seriesCode, year);
+  return withVisitorCookie(
+    new NextResponse(Readable.toWeb(stream) as ReadableStream<Uint8Array>, {
+      status: 200,
+      headers: {
+        "Content-Type": headers.contentType,
+        "Content-Disposition": headers.contentDisposition,
+        "Cache-Control": NO_STORE,
+      },
+    }),
+    visitor
+  );
 }

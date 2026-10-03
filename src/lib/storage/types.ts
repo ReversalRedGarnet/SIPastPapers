@@ -18,6 +18,39 @@ export interface PutResult {
   bytes: number;
 }
 
+/**
+ * Extra details stored alongside a file, for storage systems that serve
+ * files directly to browsers (R2). Local disk storage ignores them -- its
+ * files are only ever served through our own /api/files route, which sets
+ * these headers itself.
+ */
+export interface PutOptions {
+  /** e.g. "application/pdf" */
+  contentType?: string;
+  /** The Content-Disposition header to send with the file -- see contentDispositionHeader in src/lib/artifact-naming.ts. */
+  contentDisposition?: string;
+  /** The Cache-Control header to send with the file -- see src/lib/storage/serving-headers.ts. */
+  cacheControl?: string;
+}
+
+/**
+ * Thrown by put() when something is already saved under that key. Storage
+ * never silently replaces a file (PROJECT_SPEC section 5.3) -- a public
+ * paper's stored bytes must keep matching the fingerprint recorded for it.
+ */
+// `extends Error` makes this a specialised kind of Error, so callers can
+// tell it apart from any other failure with `err instanceof
+// StorageKeyExistsError` and handle just this case.
+export class StorageKeyExistsError extends Error {
+  readonly key: string;
+
+  constructor(key: string) {
+    super(`Refusing to overwrite: something is already stored at "${key}"`);
+    this.name = "StorageKeyExistsError";
+    this.key = key;
+  }
+}
+
 // An interface (see src/types/domain.ts) can describe required *methods*
 // (actions something must be able to perform), not just plain data fields.
 // This says "anything claiming to be a StorageProvider must provide a
@@ -26,11 +59,11 @@ export interface PutResult {
 // actually works. local-fs.ts and r2.ts below are two very different
 // implementations of this same shared contract.
 export interface StorageProvider {
-  /** Saves the given bytes under `key`. It's up to whoever calls this to avoid accidentally overwriting an existing file. */
-  // `contentType?: string` -- a `?` on a function parameter (as opposed to
+  /** Saves the given bytes under `key`. Never overwrites: throws StorageKeyExistsError if something is already saved there. */
+  // `options?: PutOptions` -- a `?` on a function parameter (as opposed to
   // an object field, see src/app/results/page.tsx) means this argument is
   // optional: callers can leave it out entirely.
-  put(key: string, data: Buffer, contentType?: string): Promise<PutResult>;
+  put(key: string, data: Buffer, options?: PutOptions): Promise<PutResult>;
 
   /** Reads the full contents saved at `key`, or returns null if nothing is there. */
   get(key: string): Promise<Buffer | null>;
@@ -50,8 +83,30 @@ export interface StorageProvider {
   /** Deletes whatever is saved at `key`. Should only be used for a deliberate, tracked correction — never as a routine way to overwrite a file. */
   delete(key: string): Promise<void>;
 
+  /** Every key that starts with `prefix` (e.g. "zips/sisc-l1/2019/"), in no particular order. */
+  list(prefix: string): Promise<string[]>;
+
   /** Returns something that can be used to build a download/view link for this file. Not guaranteed to be a public web address for every storage system. */
   locate(key: string): string;
+
+  /**
+   * Optional: a temporary link that downloads the file straight from the
+   * storage system, valid for `expiresInSeconds`. Only storage systems that
+   * can serve files to browsers themselves have this (R2 does; local disk
+   * doesn't). When it exists, /api/files sends visitors there instead of
+   * passing the file's bytes through the app.
+   */
+  presignedGetUrl?(key: string, expiresInSeconds: number): Promise<string>;
+
+  /**
+   * Copies the file at `fromKey` to `toKey`, bytes (and any stored headers)
+   * unchanged, leaving the original in place. Never overwrites: throws
+   * StorageKeyExistsError if `toKey` is taken. Moving a file is a copy
+   * followed by delete() of the original -- done as two steps by
+   * relocateStoredFile in src/lib/db/queries.ts, so the database can be
+   * updated in between and never points at a key that doesn't exist.
+   */
+  copy(fromKey: string, toKey: string): Promise<void>;
 }
 
 /**

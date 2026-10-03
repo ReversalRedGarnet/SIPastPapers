@@ -33,9 +33,14 @@ export async function generateMetadata({ params }: YearPageProps): Promise<Metad
   const context = await loadContext(seriesCode, year);
   if (!context) return { title: "Not found" };
   const label = seriesDisplayLabel(context.series.code);
+  // A year with no downloadable papers yet ("No papers yet") is a thin page:
+  // kept out of search results (and out of the sitemap), links still followed.
+  const files = await listPublishedFilesForInstance(context.series.code, context.year);
   return {
     title: `${label} ${context.year}`,
     description: `${label} ${context.year} exam papers, by subject — Solomon Islands national exam archive.`,
+    alternates: { canonical: `/browse/${context.series.code}/${context.year}` },
+    ...(files.length === 0 && { robots: { index: false, follow: true } }),
   };
 }
 
@@ -88,8 +93,8 @@ export default async function YearPage({ params }: YearPageProps) {
 
       <div className="browse-content">
         <nav aria-label="Breadcrumb" className="breadcrumb">
-          <Link href="/browse">Browse</Link> ›{" "}
-          <Link href={`/browse/${seriesCode}`}>{seriesDisplayLabel(series.code)}</Link> › {year}
+          <Link prefetch={false} href="/browse">Browse</Link> ›{" "}
+          <Link prefetch={false} href={`/browse/${seriesCode}`}>{seriesDisplayLabel(series.code)}</Link> › {year}
         </nav>
 
         <h1>{year}</h1>
@@ -113,7 +118,7 @@ export default async function YearPage({ params }: YearPageProps) {
           <ul className="list-rows">
             {subjects.map((subject) => (
               <li key={subject.slug}>
-                <Link href={`/browse/${seriesCode}/${year}/${subject.slug}`} className="list-row">
+                <Link href={`/browse/${seriesCode}/${year}/${subject.slug}`} className="list-row" prefetch={false}>
                   <span className="list-row__label">{subject.name}</span>
                   <span className="list-row__meta">
                     {subject.count} {subject.count === 1 ? "paper" : "papers"}

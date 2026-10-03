@@ -33,9 +33,16 @@ export async function generateMetadata({ params }: SubjectPageProps): Promise<Me
   const context = await loadContext(seriesCode, year, subjectSlug);
   if (!context) return { title: "Not found" };
   const label = seriesDisplayLabel(context.series.code);
+  // Same query as the page itself (React's cache() shares the result). No
+  // paper with a file -- nothing yet, or only "not yet recovered"
+  // placeholders -- is a thin page: kept out of search results (and out of
+  // the sitemap), links still followed.
+  const papers = await searchPublicArtifacts({ series: seriesCode, year: String(context.year), subject: subjectSlug });
   return {
     title: `${context.subject.canonicalName} ${context.year} — ${label}`,
     description: `${context.subject.canonicalName} past exam papers for ${label} ${context.year} — Solomon Islands national exam archive.`,
+    alternates: { canonical: `/browse/${context.series.code}/${context.year}/${subjectSlug}` },
+    ...(!papers.some((p) => p.file) && { robots: { index: false, follow: true } }),
   };
 }
 
@@ -44,26 +51,16 @@ export async function generateMetadata({ params }: SubjectPageProps): Promise<Me
 // published", so it gets the shortest cache time of any browse page.
 export const revalidate = 300;
 
-// This is required to make the caching above actually take effect on a
-// page whose web address has variable parts in it (exam series, year,
-// and subject) — same reason as in src/app/browse/[series]/page.tsx.
-// Multiplying series × years × subjects still only comes to a few hundred
-// combinations, so pre-building all of them ahead of time is cheap — and
-// a combination with no published papers yet simply shows the normal
-// "nothing here" message.
+// Returning an empty list means "don't build any of these pages ahead of
+// time" -- each one is built the first time someone visits it, then cached
+// (refreshed every `revalidate` seconds above). Pre-building all ~630
+// series × year × subject combinations made every deployment rewrite all
+// of them as ISR writes, whether or not anyone visited them. Next.js needs
+// this function to exist, even empty, to cache pages for addresses it only
+// finds out about while running. Made-up addresses never get this far:
+// src/proxy.ts answers them with a 404 first.
 export async function generateStaticParams() {
-  const examSeries = await listExamSeries();
-  const subjects = await listSubjects();
-  const years = listBrowseYears();
-  const params: { series: string; year: string; subject: string }[] = [];
-  for (const s of examSeries) {
-    for (const year of years) {
-      for (const subject of subjects) {
-        params.push({ series: s.code, year: String(year), subject: subject.subjectCode ?? subject.id });
-      }
-    }
-  }
-  return params;
+  return [];
 }
 
 export default async function SubjectPage({ params }: SubjectPageProps) {
@@ -91,9 +88,9 @@ export default async function SubjectPage({ params }: SubjectPageProps) {
 
       <div className="browse-content">
         <nav aria-label="Breadcrumb" className="breadcrumb">
-          <Link href="/browse">Browse</Link> ›{" "}
-          <Link href={`/browse/${seriesCode}`}>{seriesDisplayLabel(series.code)}</Link> ›{" "}
-          <Link href={`/browse/${seriesCode}/${year}`}>{year}</Link> › {subject.canonicalName}
+          <Link prefetch={false} href="/browse">Browse</Link> ›{" "}
+          <Link prefetch={false} href={`/browse/${seriesCode}`}>{seriesDisplayLabel(series.code)}</Link> ›{" "}
+          <Link prefetch={false} href={`/browse/${seriesCode}/${year}`}>{year}</Link> › {subject.canonicalName}
         </nav>
 
         <h1>{subject.canonicalName}</h1>
@@ -110,7 +107,7 @@ export default async function SubjectPage({ params }: SubjectPageProps) {
               const label = artifactListLabel(paper.artifactType, paper.paperNumber);
               return (
                 <li key={paper.id}>
-                  <Link href={href} className="list-row">
+                  <Link href={href} className="list-row" prefetch={false}>
                     <span className="list-row__label">{label}</span>
                     {!paper.file && <Badge tone={statusTone(paper.status)}>{statusLabel(paper.status)}</Badge>}
                     <span className="list-row__chevron" aria-hidden="true">

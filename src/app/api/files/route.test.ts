@@ -14,26 +14,28 @@
  */
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { loadTestDatabaseEnv } from "@/lib/db/test-database-env";
 import { NextRequest } from "next/server";
 import { query, withRolledBackTransaction, closePool } from "@/lib/db/client";
 
 let queries: typeof import("@/lib/db/queries");
 let GET: typeof import("./[fileId]/route").GET;
+let HEAD: typeof import("./[fileId]/route").HEAD;
 let tmpStorageDir: string;
 
 before(async () => {
-  if (existsSync(".env.local")) {
-    process.loadEnvFile(".env.local");
-  }
+  // Connects to the separate test database in .env.test.local, and refuses
+  // to run if that's the real database -- see test-database-env.ts.
+  loadTestDatabaseEnv();
   process.env.STORAGE_BACKEND = "local";
   process.env.DB_POOL_PROFILE = "cli";
   tmpStorageDir = mkdtempSync(path.join(tmpdir(), "sipp-files-route-test-storage-"));
   process.env.SIPASTPAPERS_STORAGE_ROOT = tmpStorageDir;
   queries = await import("@/lib/db/queries");
-  ({ GET } = await import("./[fileId]/route"));
+  ({ GET, HEAD } = await import("./[fileId]/route"));
 });
 
 after(async () => {
@@ -79,4 +81,40 @@ test("GET /api/files/[fileId] returns 404 for an id that doesn't exist at all", 
     params: Promise.resolve({ fileId: "00000000-0000-0000-0000-000000000000" }),
   });
   assert.equal(response.status, 404);
+});
+
+test("GET /api/files/[fileId] streams a published paper's file (local storage) and HEAD answers without a body", async () => {
+  await withRolledBackTransaction(async () => {
+    const bytes = Buffer.from("%PDF-1.4\n%route-stream-test\n");
+    const { artifactId } = await queries.ingestArtifact({
+      examSeriesCode: "sisc-l1",
+      year: 2099,
+      subjectSlug: "mathematics",
+      artifactType: "question_paper",
+      paperNo: "11",
+      file: { buffer: bytes, mime: "application/pdf" },
+    });
+    await queries.approveRights(artifactId, {
+      basis: "teacher-verified",
+      approvedBy: "Test Verifier",
+      evidenceUri: "file://evidence/11.pdf",
+    });
+    await queries.publishArtifact(artifactId);
+    const [fileRow] = await query<{ id: string }>("select id from files where artifact_id = $1", [artifactId]);
+
+    const response = await GET(new NextRequest(`http://localhost/api/files/${fileRow.id}`), {
+      params: Promise.resolve({ fileId: fileRow.id }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+    assert.match(response.headers.get("Content-Disposition") ?? "", /^inline; filename=".+\.pdf"; filename\*=UTF-8''/);
+    assert.equal(Buffer.from(await response.arrayBuffer()).toString(), bytes.toString());
+
+    const head = await HEAD(new NextRequest(`http://localhost/api/files/${fileRow.id}`, { method: "HEAD" }), {
+      params: Promise.resolve({ fileId: fileRow.id }),
+    });
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get("Content-Length"), String(bytes.byteLength));
+    assert.equal(head.headers.get("Location"), null, "HEAD never hands out a link");
+  });
 });

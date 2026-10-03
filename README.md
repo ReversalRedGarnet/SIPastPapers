@@ -31,7 +31,10 @@ in the repository.
   [`src/lib/db/queries.ts`](./src/lib/db/queries.ts):
   - `/` — homepage with search bar and exam level / year / subject selectors.
   - `/results` — filtered, paginated results table (published artifacts
-    only).
+    only). The search box understands years ("2018"), exam levels
+    however they're written ("Year 11", "Form 5", "SISC L1") and short
+    subject names ("maths"); every other word must match
+    (`src/lib/search-query.ts`).
   - `/browse` — click-through by exam level → year → subject → paper
     (`/browse` → `/browse/[series]` → `/browse/[series]/[year]` →
     `/browse/[series]/[year]/[subject]`); a series or year with nothing
@@ -76,7 +79,17 @@ in the repository.
     every matching artifact whose rights are already approved and skips
     (with a stated reason) any that aren't.
   - `unpublish <artifact-id>` — takes a published artifact back off the
-    public site; there was previously no way to do this at all.
+    public site, and moves its stored file to a `quarantine/` key so any
+    download link already handed out stops working immediately (nothing
+    under `quarantine/` is ever served). `publish` moves it back.
+    `unpublish <artifact-id> --purge` lists what would be permanently
+    deleted from quarantine; add `--confirm` to delete it (audit-logged).
+    Unpublishing also deletes that year's "Download all" zips.
+  - `build-zips (--series <code> --year <yyyy> | --all) [--confirm]` —
+    builds each year's "Download all" zip from the papers servable right
+    now and stores it in R2 (the website never builds zips; until a
+    year's zip is built it answers "not ready yet"). `publish` and
+    `unpublish` print the exact command when a year needs rebuilding.
   - `list` — every artifact with its id/status/rights status.
   - `coverage` — the year × subject matrix (spec section 11.3): every
     exam-instance × subject combination, with each cell's real status
@@ -93,11 +106,13 @@ in the repository.
     any of them throws immediately rather than silently using local
     storage. The PDF download/view route
     ([`src/app/api/files/[fileId]/route.ts`](./src/app/api/files/[fileId]/route.ts))
-    always proxies bytes through the app (streams `StorageProvider.get()`
-    to the client) rather than redirecting to a presigned R2 URL, so it
-    keeps re-checking the artifact's rights/publication status on every
-    request — a presigned URL would stay valid for its TTL even after a
-    rights change.
+    re-checks the paper's publication and rights status on every request,
+    applies the rate limit, then redirects (302) to a presigned
+    R2 URL valid for 10 minutes — so PDF bytes never pass through the app.
+    A paper that's unpublished stops being handed out at once; a link
+    handed out just before stays valid until it expires (accepted, see
+    PROJECT_SPEC section 5.1). With local storage the route streams the
+    file itself instead.
   - `next dev`/`build`/`start` load `.env.local` automatically; the CLI
     loads it itself (`process.loadEnvFile`) since it runs outside the
     Next.js runtime.
@@ -110,13 +125,19 @@ This was a deliberate choice, not an oversight: a genuine dual-mode would
 need either two divergent SQL dialects per query (`?` vs `$1`, `ON
 CONFLICT`, boolean/jsonb handling all differ) or a query-builder
 abstraction thick enough to become the "heavy ORM" this project explicitly
-avoided elsewhere. Neon branching makes obtaining a live connection cheap
-(the same credentials work for dev, and the test suite runs every write
-inside a transaction that's always rolled back — see
-`src/lib/db/queries.test.ts` — so it never touches real data), so the
-downside of dropping the sqlite fallback is small. Run
-`npm run db:migrate` once against a fresh database before `npm run dev`,
-`npm run cli`, or `npm run test`.
+avoided elsewhere. Neon branching makes obtaining a live connection cheap,
+so the downside of dropping the sqlite fallback is small. Run
+`npm run db:migrate` once against a fresh database before `npm run dev`
+or `npm run cli`.
+
+The test suite never uses `.env.local`'s database. It connects to a
+separate Neon **branch** whose pooled connection string goes in
+`.env.test.local` (gitignored) as `DATABASE_URL_POOLED`, and refuses to
+run if that file is missing or points at the same database endpoint as
+`.env.local` or `PRODUCTION_DATABASE_HOST`
+(`src/lib/db/test-database-env.ts`). Every test write also runs inside a
+transaction that's always rolled back, and every test uses local file
+storage (it refuses to run with any `R2_*` variable set).
 
 ## Stack
 
@@ -130,6 +151,10 @@ downside of dropping the sqlite fallback is small. Run
   `migrations/0001_init.sql`, applied with `npm run db:migrate`
 - Local filesystem storage or Cloudflare R2, switched via
   `STORAGE_BACKEND` (behind the `StorageProvider` abstraction)
+- Hosted on Vercel. [`vercel.json`](./vercel.json) pins server functions
+  to `syd1` (Sydney), next to the Neon database (`ap-southeast-2`) and the
+  closest Vercel region to Solomon Islands visitors — Vercel's default
+  (`iad1`, Washington DC) put every database query across the Pacific
 
 ## Getting started
 
@@ -141,12 +166,60 @@ npm run dev                  # http://localhost:3000 (public site only)
 npm run cli -- coverage      # admin CLI — try `npm run cli -- help` for all commands
 npm run build                # production build + typecheck
 npm run lint
-npm run test                 # node:test via tsx --test
+npm run test:unit            # tests that need no database
+npm run test:db              # database tests; need .env.test.local (Neon branch), see above
+npm run test                 # both
 ```
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request, every push to
+`main`, and on demand:
+
+1. **Lint, typecheck, unit tests** — always; needs no secrets.
+2. **Database tests and build** — against a Neon test branch. Needs two
+   repository secrets (Settings → Secrets and variables → Actions):
+   - `TEST_DATABASE_URL_POOLED`: the test **branch's** pooled connection
+     string (the same one as in your `.env.test.local`);
+   - `PRODUCTION_DATABASE_HOST`: the real database's host, e.g.
+     `ep-xxxx.ap-southeast-2.aws.neon.tech` (not a credential), so the
+     tests can refuse to run if the branch string ever points at it.
+
+   Without them (or on a pull request from a fork) this job is skipped with
+   a warning. CI never has R2 credentials or the real database's connection
+   string. Only one run of this job uses the test branch at a time, and it
+   fails if the tests leave any rows behind there
+   (`scripts/test-db-rows.ts` counts every table before and after; it also
+   works locally).
 
 Any locally-stored uploaded files are created on first run under
 `local-storage/` (gitignored, disposable). With `STORAGE_BACKEND=r2`, files
 go to the configured R2 bucket instead.
+
+## Environment variables: Vercel vs. CLI-only
+
+The website never writes to R2: it only reads (and hands out short-lived
+download links). Give Vercel — Production **and** Preview — an R2 API
+token with **read-only** object access. The token that can write
+(ingest, unpublish, purge, set-disposition) stays in your local
+`.env.local` for the CLI only.
+
+| Variable | Vercel (Production / Preview) | Notes |
+|---|---|---|
+| `DATABASE_URL_POOLED` | Required | Build and runtime. Preview should use a Neon **branch**, not production: the report form is the one thing the site writes, and it writes here. |
+| `STORAGE_BACKEND=r2` | Required | Without it the site looks for files on local disk, which Vercel doesn't have. |
+| `R2_ACCOUNT_ID`, `R2_BUCKET_NAME` | Required | |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Required — **read-only token** | |
+| `RATE_LIMIT_SECRET` | Recommended | Any long random string; without it each running copy signs visitor cookies with its own key. |
+| `NEXT_PUBLIC_SITE_URL` | Optional | Defaults to `https://www.sipastexams.com` (the bare domain only redirects there). |
+| `RATE_LIMIT_*` overrides | Optional | See `.env.example`. |
+| `PAGE_PATHS_MIN_RELOAD_SECONDS` | Optional | `src/proxy.ts` reloads its list of real page addresses when asked for one not in it, at most this often (default 30): a newly published paper is reachable within 30 s. |
+| `PAGE_PATHS_REFRESH_SECONDS` | Optional | The proxy also reloads the list this often regardless (default 300); this is what drops a withdrawn paper's address. |
+| `DATABASE_URL` | CLI only | Direct connection, for `npm run db:migrate`. |
+| `DB_POOL_PROFILE`, `SIPASTPAPERS_STORAGE_ROOT` | CLI / local only | |
+
+`VERCEL_REGION` is set by Vercel itself. Building the site runs no
+migrations and writes nothing.
 
 ## License
 

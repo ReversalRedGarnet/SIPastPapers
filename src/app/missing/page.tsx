@@ -10,6 +10,7 @@ export const metadata: Metadata = {
   title: "Missing papers",
   description:
     "Every past Solomon Islands national exam paper we know about but don't have a copy of yet. Have one? Email it in.",
+  alternates: { canonical: "/missing" },
 };
 
 // Same reasoning as the browse pages -- this only changes when the
@@ -105,10 +106,12 @@ export default async function MissingPapersPage() {
                         <a
                           className="table-action"
                           href={mailtoHref(row)}
-                          aria-label={`Send us ${row.subjectName} ${row.year} (${seriesDisplayLabel(row.examSeriesCode)})`}
                         >
                           <MailIcon />
+                          {/* The accessible name starts with the visible words, so
+                              "click Send it" works with voice control. */}
                           Send it
+                          <span className="visually-hidden">{`: ${row.subjectName} ${row.year} (${seriesDisplayLabel(row.examSeriesCode)})`}</span>
                         </a>
                       </td>
                     </tr>

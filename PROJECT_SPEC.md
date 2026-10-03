@@ -60,7 +60,7 @@ Do not wait for 100% historical completeness. Release a coherent, explicitly lab
 
 1. Homepage: search bar + three primary selectors (exam level, year, subject).
 2. Results page: cards/table showing year, level, subject, artifact type, page count, verification status and actions.
-3. Document page: title, metadata, provenance, preview/viewer, download button, related artifacts, report-issue link.
+3. Document page: title, metadata, provenance, preview/viewer, open-PDF button (the PDF opens in the browser, which is where it can be saved — there is no separate forced-download response), related artifacts, report-issue link.
 4. Browse page: year matrix and subject matrix for users who do not know exactly what to search. *(Built as a click-through — series → year → subject → paper — rather than a matrix view; empty series/years are flagged with a "No papers yet" badge instead of shown as grid cells. The full year × subject coverage matrix is a CLI-only view — section 11.3.)*
 5. Collection page: overview of each exam family and its historical availability. *(Not built as a separate page — `/browse`'s exam-level → year → subject → paper click-through and the CLI's `coverage` matrix (section 11.3) serve this role instead.)*
 6. About page: project purpose, ownership, open-source link, rights statement, correction/takedown process.
@@ -138,18 +138,51 @@ download/view route) never depend on which one is active:
   `R2_BUCKET_NAME` (`.env.example`); missing any of them throws
   immediately rather than silently falling back to local storage.
 
-File serving (`src/app/api/files/[fileId]/route.ts`) always proxies
-bytes through the app — it calls `StorageProvider.get()` and streams the
-result to the client — for both backends, rather than redirecting to a
-presigned R2 URL. This was a deliberate choice: the route already
-re-checks the artifact's live `published` status on every request before
-touching storage (section 17.1 invariant), and a presigned URL would
-remain valid for its TTL even if that status changed a moment after the
-URL was minted. Proxying keeps "never serve a stale cached copy" true
-for R2 the same way it already was for local disk. Exam PDFs are small
-enough that streaming through the app adds no meaningful latency; this
-should be revisited only if file sizes or traffic volume make proxying
-a bottleneck.
+File serving (`src/app/api/files/[fileId]/route.ts`) re-checks, on
+every request, that the paper is published, its rights are currently
+approved and unexpired, and the file is its current one (section 17.1
+invariant), applies the rate limit (the in-page preview, `?preview=1`, has a
+larger allowance than opening a paper), and then redirects (302,
+`Cache-Control: private, no-store`) to a presigned R2 URL valid for 10
+minutes. R2 serves the bytes directly, with the headers stored on each
+object at ingest (`Content-Type`, `Content-Disposition: inline` with the
+paper's readable filename, `Cache-Control: private, max-age=600`), and
+handles Range requests so interrupted downloads can resume. With local
+storage (development) the route streams the file itself.
+
+This replaced the original "always proxy bytes through the app" design
+(see the decision log, 2026-10-01). The trade-off, accepted explicitly:
+a presigned URL handed out just before a paper is unpublished stays
+valid until it expires — at most 10 minutes. For an instant takedown,
+`unpublish` also moves the paper's stored file(s) to
+`quarantine/<UTC timestamp>/<original key>` (bytes kept, logged as
+`file_quarantined` in `audit_events`), which invalidates such links
+immediately. Nothing under `quarantine/` is ever served: a paper with any
+quarantined file is treated as not servable by every public read (file
+route, year zip, pages, sitemap). Publishing a paper again first moves
+its files back to their original keys (`file_restored`), and refuses if
+that fails. `unpublish --purge --confirm` permanently deletes a
+withdrawn paper's quarantined files (`file_purged`, keeping key, sha256
+and size).
+
+Every such move is copy → repoint the `files` row (only if it still
+holds the old key) → delete the old copy, so a `files` row never points
+at a key that doesn't exist, even if a step fails or the process dies
+part-way (`relocateStoredFile` in `src/lib/db/queries.ts`). Publishing
+also refuses a paper whose current file isn't actually in storage.
+
+**Year zips** ("Download all" on a year's browse page) are prebuilt by
+the CLI (`build-zips`) and stored in R2 under
+`zips/<series>/<year>/<fingerprint>.zip`, where the fingerprint covers
+every file inside (id, sha256, name in the zip). `/api/download-year`
+applies the zip rate limit, lists the year's servable files live (the
+same rule as single PDFs), works out the matching key, and redirects to
+a 10-minute presigned link — or answers **503** ("not ready yet",
+logged as `zip` / `not_built`) if that zip hasn't been built. A zip
+that includes a withdrawn paper, or misses a new one, no longer matches
+and is never handed out; `unpublish` also deletes the year's zips at
+once. No zip is ever built by the website, so none of it passes through
+Vercel.
 
 ### 5.2 Storage layout
 
@@ -321,6 +354,13 @@ si-national-exam-archive/
 - Run migration step separately and safely.
 - Post-deploy smoke tests: homepage, search, one sample document, storage access.
 
+*Status (2026-10-03):* `.github/workflows/ci.yml` runs lint, typecheck and
+unit tests on every pull request and push to main, then the database tests
+and the build against a Neon test branch (README, "Continuous
+integration"). Deploy previews and production deploys from main come from
+Vercel. Not yet done: schema validation, post-deploy smoke tests, and
+branch protection (a GitHub setting).
+
 ### 10.3 Environment separation
 
 ```
@@ -418,6 +458,17 @@ unpublish <artifact-id> [--status withdrawn|rights_hold] [--reason <text>]
 
     Flips a published artifact back to a non-public status and logs the
     action. New command — publishing was previously one-directional.
+    Also moves the artifact's stored file(s) to a quarantine key (section
+    5.1), so download links already handed out stop working at once.
+    Publishing it again moves them back.
+
+unpublish <artifact-id> --purge [--confirm] [--reason <text>]
+
+    Unpublishes (or, if already unpublished, makes sure every file is in
+    quarantine), then lists the quarantined files that would be
+    permanently deleted. Only with --confirm are they deleted, each
+    logged as `file_purged`. A purged paper can't be published again
+    unless re-ingested.
 
 list
 
@@ -669,7 +720,9 @@ The project owner should control the GitHub organization/repository, primary dom
   scoped to transient connection-level errors only (never query-level
   errors, and never a query already running inside an open transaction,
   since retrying that could land on a different connection mid-
-  transaction).
+  transaction). *Amended 2026-09-19:* `web` is now 9s timeout × 2
+  attempts (worst case ~18.5s) -- a single 5s attempt failed visitors'
+  requests while Neon woke from suspend; `cli` is unchanged.
 - **2026-09-14 — `createIssue` excluded from connection retry.** It's a
   non-transactional INSERT with no natural unique constraint on `issues`
   to dedupe on (two people can legitimately report the same problem), so
@@ -695,6 +748,39 @@ The project owner should control the GitHub organization/repository, primary dom
   schemes now being organized for ingest — they are newly-verified.
   Marking schemes for other series/years remain subject to the same
   verification bar before ingestion.
+- **2026-10-01 — PDFs served by redirect to presigned R2 URLs,
+  superseding the 2026-09-13 "always proxy bytes" decision.** Proxying
+  put every PDF byte through a Vercel function (no Range support, no
+  resume on flaky connections, Vercel bandwidth and function time per
+  download). `/api/files` now does the live rights check and rate limit,
+  then 302-redirects to a presigned R2 URL valid for 10 minutes (section
+  5.1). Accepted trade-off: a link handed out just before a paper is
+  unpublished keeps working until it expires — at most ~10 minutes.
+- **2026-10-03 — Browse-subject and paper pages are built on first
+  visit, and made-up addresses are rejected before rendering.** Every
+  deployment was rewriting all ~630 pre-built subject pages as Vercel ISR
+  writes (deployments, not time-based revalidation, were nearly all of
+  the usage). Now only 40 pages are pre-built; the rest are built and
+  stored when first visited. Because Next.js also stores a page that
+  turns out not to exist, `src/proxy.ts` checks browse and paper
+  addresses against the real ones and answers made-up ones with a real,
+  uncached 404. The list is held in memory and reloaded when an address
+  isn't in it, at most once per `PAGE_PATHS_MIN_RELOAD_SECONDS` (default
+  30, so a bot can't force a query per request and a new paper is
+  reachable within 30 s), and every `PAGE_PATHS_REFRESH_SECONDS` (default
+  300) as a fallback. If the list can't be loaded, requests go through and
+  the page answers its own 404 (now a real 404 status: the paper page no
+  longer streams a loading screen first). The proxy runs on every
+  browse/paper request, prefetches included, so no header skips the check;
+  browser prefetches are judged from the list in memory only. Long lists
+  of links (results, recently added, browse lists, sidebar years) don't
+  prefetch, which keeps proxy runs to a few per page view.
+- **2026-10-03 — Year zips prebuilt in R2 instead of built live.** A
+  live-built zip (20–40 MB) passed through a Vercel function on every
+  download and was the largest remaining source of Fast Origin
+  Transfer. Zips are now built by the CLI and served like PDFs (section
+  5.1). Trade-off: after a publish or unpublish, that year's "Download
+  all" answers 503 until `build-zips` is run (the CLI says when).
 
 ### 14.3 Documentation set
 
