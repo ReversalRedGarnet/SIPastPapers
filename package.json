@@ -11,7 +11,7 @@
     "cli": "tsx scripts/cli.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "test": "npm run test:unit && npm run test:db",
-    "test:unit": "tsx --test src/lib/rate-limit.test.ts src/lib/rate-limit-response.test.ts src/lib/log.test.ts src/lib/db/client.test.ts src/lib/db/test-database-env.test.ts src/lib/db/quarantine-key.test.ts src/lib/db/public-paths.test.ts src/lib/format.test.ts src/lib/artifact-naming.test.ts src/lib/report-form.test.ts src/lib/missing-papers.test.ts src/lib/storage/r2.test.ts src/lib/storage/local-fs.test.ts src/lib/storage/index.test.ts src/app/api/files/route-guards.test.ts src/lib/year-zip.test.ts src/lib/year-zip-build.test.ts src/lib/search-query.test.ts src/lib/sitemap-entries.test.ts src/lib/prefetch.test.ts src/lib/page-guard.test.ts src/lib/link-prefetch.test.ts",
+    "test:unit": "tsx --test src/lib/rate-limit.test.ts src/lib/rate-limit-response.test.ts src/lib/log.test.ts src/lib/db/client.test.ts src/lib/db/test-database-env.test.ts src/lib/db/quarantine-key.test.ts src/lib/db/public-paths.test.ts src/lib/format.test.ts src/lib/artifact-naming.test.ts src/lib/report-form.test.ts src/lib/missing-papers.test.ts src/lib/storage/r2.test.ts src/lib/storage/local-fs.test.ts src/lib/storage/index.test.ts src/app/api/files/route-guards.test.ts src/lib/year-zip.test.ts src/lib/year-zip-build.test.ts src/lib/search-query.test.ts src/lib/sitemap-entries.test.ts src/lib/prefetch.test.ts src/lib/page-guard.test.ts src/lib/link-prefetch.test.ts src/lib/paper-pager.test.ts",
     "test:db": "tsx --test scripts/cli-lib.test.ts src/lib/db/queries.test.ts src/app/api/files/route.test.ts src/app/api/quarantine-serving.test.ts src/app/api/year-zip-route.test.ts"
   },
   "dependencies": {

@@ -27,6 +27,8 @@ import { listBrowseYears } from "@/lib/browse-years";
 import { SITE_URL } from "@/lib/site";
 import { buildSitemapEntries } from "@/lib/sitemap-entries";
 import { browseSubjectPath, paperPath } from "@/lib/page-links";
+import { deriveMissingPaperRows } from "@/lib/missing-papers";
+import { adjacentOpenablePapers } from "@/lib/paper-pager";
 import { PUBLICLY_VISIBLE } from "./visibility";
 import { collectPublicUrls } from "../../../scripts/public-urls";
 import type { CoverageCell, FileRelocation } from "@/lib/db/queries";
@@ -511,11 +513,14 @@ async function publishTestPaper(paperNo: string) {
   const slug = artifactSlug({ artifactType: "question_paper", paperNo });
 
   async function visibility() {
-    const search = await queries.searchPublicArtifacts({ series: "sisc-l1", year: "2099", subject: "mathematics" });
+    const filters = { series: "sisc-l1", year: "2099", subject: "mathematics" };
+    const search = await queries.searchPublicArtifacts(filters);
+    const results = await queries.searchPublicArtifactsPage(filters, { limit: 100 });
     const recent = await queries.listRecentPublicArtifacts(10_000);
     const zip = await queries.listPublishedFilesForInstance("sisc-l1", 2099);
     return {
       search: search.some((r) => r.id === artifactId),
+      results: results.records.some((r) => r.id === artifactId),
       bySlug: (await queries.getPublicArtifactBySlug("sisc-l1", 2099, "mathematics", slug)) !== undefined,
       recent: recent.some((r) => r.id === artifactId),
       zip: zip.some((f) => f.fileId === fileRow.id),
@@ -523,8 +528,8 @@ async function publishTestPaper(paperNo: string) {
       reportable: (await queries.getPublicArtifactPath(artifactId)) !== undefined,
     };
   }
-  const everywhere = { search: true, bySlug: true, recent: true, zip: true, download: true, reportable: true };
-  const nowhere = { search: false, bySlug: false, recent: false, zip: false, download: false, reportable: false };
+  const everywhere = { search: true, results: true, bySlug: true, recent: true, zip: true, download: true, reportable: true };
+  const nowhere = { search: false, results: false, bySlug: false, recent: false, zip: false, download: false, reportable: false };
   return { artifactId, visibility, everywhere, nowhere };
 }
 
@@ -945,7 +950,9 @@ test("a not-yet-recovered placeholder given a file is listed only with approved 
     const address = `/exams/sisc-l1/2099/mathematics/${slug}`;
 
     async function seen() {
-      const search = await queries.searchPublicArtifacts({ series: "sisc-l1", year: "2099", subject: "mathematics" });
+      const filters = { series: "sisc-l1", year: "2099", subject: "mathematics" };
+      const search = await queries.searchPublicArtifacts(filters);
+      const results = await queries.searchPublicArtifactsPage(filters, { limit: 100 });
       const record = search.find((r) => r.id === artifactId);
       const sitemap = buildSitemapEntries(
         await queries.listExamSeries(),
@@ -954,6 +961,7 @@ test("a not-yet-recovered placeholder given a file is listed only with approved 
       ).map((e) => e.url);
       return {
         search: record !== undefined,
+        results: results.records.some((r) => r.id === artifactId),
         fileShown: Boolean(record?.file),
         bySlug: (await queries.getPublicArtifactBySlug("sisc-l1", 2099, "mathematics", slug)) !== undefined,
         proxy: judgePath(await loadPublicPagePaths(), address) === "exists",
@@ -961,7 +969,8 @@ test("a not-yet-recovered placeholder given a file is listed only with approved 
         download: (await queries.getFileForDownload(fileRow.id)) !== undefined,
       };
     }
-    const hidden = { search: false, fileShown: false, bySlug: false, proxy: false, sitemap: false, download: false };
+    const hidden = { search: false, results: false, fileShown: false, bySlug: false, proxy: false, sitemap: false, download: false };
+    // Listed on browse, but never in the search results page (it can't be opened).
     const listedAsPlaceholder = { ...hidden, search: true, bySlug: true, proxy: true };
 
     assert.deepEqual(await seen(), hidden, "rights not approved (as ingested): hidden everywhere");
@@ -978,6 +987,177 @@ test("a not-yet-recovered placeholder given a file is listed only with approved 
 
     await query("delete from files where artifact_id = $1", [artifactId]);
     assert.deepEqual(await seen(), listedAsPlaceholder, "with no file, a placeholder is listed whatever its rights");
+  });
+});
+
+test("search results list only papers that can be opened: a placeholder is never in a page, a search or the count, but browse and /missing still show it", async () => {
+  await withRolledBackTransaction(async () => {
+    const subject = await insertTestSubject();
+    const word = subject.slug.replace("coverage-test-", ""); // unique to this subject's name
+    const { artifactId: publishedId } = await queries.ingestArtifact({
+      examSeriesCode: "sisc-l1",
+      year: 2099,
+      subjectSlug: subject.slug,
+      artifactType: "question_paper",
+      paperNo: null,
+      file: { buffer: Buffer.from("%PDF-1.4\n%results-openable\n"), mime: "application/pdf" },
+    });
+    await queries.approveRights(publishedId, {
+      basis: "teacher-verified",
+      approvedBy: "Test Verifier",
+      evidenceUri: "file://evidence/results-openable.pdf",
+    });
+    assert.ok(!("missing" in (await queries.publishArtifact(publishedId))), "question paper should publish");
+
+    const allBefore = (await queries.searchPublicArtifactsPage({}, { limit: 1 })).total;
+
+    // A placeholder the way the real ones were made (see the coverage tests above).
+    const instance = await queryOne<{ id: string }>(
+      `select ei.id from exam_instances ei join exam_series es on es.id = ei.exam_series_id
+       where es.code = 'sisc-l1' and ei.year = 2099`
+    );
+    const placeholderId = randomUUID();
+    await query(
+      `insert into artifacts (id, exam_instance_id, subject_id, type, paper_no, title, status, published_at)
+       values ($1, $2, $3, 'marking_scheme', null, 'Results test marking scheme, not yet recovered', 'not_yet_recovered', null)`,
+      [placeholderId, instance!.id, subject.id]
+    );
+
+    const results = (filters: Parameters<typeof queries.searchPublicArtifactsPage>[0]) =>
+      queries.searchPublicArtifactsPage(filters, { limit: 100 });
+    const filters = { series: "sisc-l1", year: "2099", subject: subject.slug };
+
+    for (const [label, search, expectedIds] of [
+      ["filters", filters, [publishedId]],
+      ["search", { q: `${word} 2099` }, [publishedId]],
+      ["search matching only the placeholder", { q: `${word} marking scheme` }, []],
+    ] as const) {
+      const page = await results(search);
+      assert.deepEqual(page.records.map((r) => r.id), expectedIds, `${label}: only the openable paper is listed`);
+      assert.equal(page.total, expectedIds.length, `${label}: the count leaves the placeholder out too`);
+      assert.ok(page.records.every((r) => r.file !== null), `${label}: every row has a file`);
+    }
+    assert.equal((await queries.searchPublicArtifactsPage({}, { limit: 1 })).total, allBefore, "the unfiltered count is unchanged");
+
+    // The "N matching papers haven't been recovered yet" note counts it.
+    assert.equal(await queries.countUnrecoveredMatches({ q: `${word} marking scheme` }), 1);
+    assert.equal(await queries.countUnrecoveredMatches(filters), 1);
+    assert.equal(await queries.countUnrecoveredMatches({ q: `${word} 2098` }), 0, "no placeholder in that year");
+
+    // Browse still lists it, as a placeholder with no file...
+    const browse = await queries.searchPublicArtifacts(filters);
+    assert.deepEqual(new Set(browse.map((r) => r.id)), new Set([publishedId, placeholderId]));
+    assert.equal(browse.find((r) => r.id === placeholderId)?.file, null);
+    const subjects = await queries.listPublicSubjectsForInstance("sisc-l1", 2099);
+    assert.equal(subjects.find((s) => s.slug === subject.slug)?.count, 2, "the browse year page counts it");
+
+    // ...and so does /missing.
+    const missing = deriveMissingPaperRows(await queries.getCoverageMatrix()).find(
+      (r) => r.examSeriesCode === "sisc-l1" && r.year === 2099 && r.subjectSlug === subject.slug
+    );
+    assert.deepEqual(missing?.missingArtifactTypes, ["marking_scheme"]);
+  });
+});
+
+/** The sisc-l1 exam instance for `year`, created if this test database has none yet. */
+async function examInstanceId(year: number): Promise<string> {
+  await query(
+    `insert into exam_instances (exam_series_id, year)
+     select id, $1 from exam_series where code = 'sisc-l1'
+     on conflict (exam_series_id, year) do nothing`,
+    [year]
+  );
+  const row = await queryOne<{ id: string }>(
+    `select ei.id from exam_instances ei join exam_series es on es.id = ei.exam_series_id
+     where es.code = 'sisc-l1' and ei.year = $1`,
+    [year]
+  );
+  return row!.id;
+}
+
+/** A published, openable sisc-l1 paper for a test subject. */
+async function publishSubjectPaper(subjectSlug: string, year: number, artifactType: ArtifactType): Promise<string> {
+  const { artifactId } = await queries.ingestArtifact({
+    examSeriesCode: "sisc-l1",
+    year,
+    subjectSlug,
+    artifactType,
+    paperNo: null,
+    file: { buffer: Buffer.from(`%PDF-1.4\n%pager-${subjectSlug}-${year}-${artifactType}\n`), mime: "application/pdf" },
+  });
+  await queries.approveRights(artifactId, {
+    basis: "teacher-verified",
+    approvedBy: "Test Verifier",
+    evidenceUri: `file://evidence/pager-${year}-${artifactType}.pdf`,
+  });
+  assert.ok(!("missing" in (await queries.publishArtifact(artifactId))), "test paper should publish");
+  return artifactId;
+}
+
+/** A "not yet recovered" placeholder (no file) for a test subject, made the way the real ones were. */
+async function insertPlaceholder(subjectId: string, year: number, artifactType: ArtifactType): Promise<string> {
+  const id = randomUUID();
+  await query(
+    `insert into artifacts (id, exam_instance_id, subject_id, type, paper_no, title, status, published_at)
+     values ($1, $2, $3, $4, null, $5, 'not_yet_recovered', null)`,
+    [id, await examInstanceId(year), subjectId, artifactType, `Pager test ${artifactType} ${year}, not yet recovered`]
+  );
+  return id;
+}
+
+/** What one paper's page links to: Related papers, and Previous/Next. */
+async function paperPageLinks(subjectSlug: string, year: number, artifactType: ArtifactType) {
+  const page = await queries.getPublicArtifactBySlug("sisc-l1", year, subjectSlug, artifactSlug({ artifactType, paperNo: null }));
+  assert.ok(page, `the ${year} ${artifactType} page should exist`);
+  const { prev, next } = adjacentOpenablePapers(await queries.listSubjectArtifacts("sisc-l1", subjectSlug), page!.record.id);
+  return { related: page!.related.map((r) => r.id), prev: prev?.id, next: next?.id };
+}
+
+test("a paper page never links to a placeholder: Related papers leave it out, and Previous/Next skip to the nearest paper that can be opened", async () => {
+  await withRolledBackTransaction(async () => {
+    const subject = await insertTestSubject();
+    // In the subject's reading order (year, then type):
+    const a = await publishSubjectPaper(subject.slug, 2095, "question_paper");
+    const p1 = await insertPlaceholder(subject.id, 2096, "question_paper");
+    const p2 = await insertPlaceholder(subject.id, 2097, "marking_scheme");
+    const b = await publishSubjectPaper(subject.slug, 2097, "question_paper");
+    const p3 = await insertPlaceholder(subject.id, 2098, "question_paper");
+    const c = await publishSubjectPaper(subject.slug, 2099, "question_paper");
+
+    assert.deepEqual(await paperPageLinks(subject.slug, 2097, "question_paper"), { related: [], prev: a, next: c });
+    // A placeholder's own page still works, and links only to openable papers.
+    assert.deepEqual(await paperPageLinks(subject.slug, 2097, "marking_scheme"), { related: [b], prev: a, next: b });
+
+    // "More papers in this subject" is built from the same list, which still has every placeholder.
+    const list = await queries.listSubjectArtifacts("sisc-l1", subject.slug);
+    assert.deepEqual(
+      list.map((r) => [r.id, r.openable]),
+      [[a, true], [p1, false], [p2, false], [b, true], [p3, false], [c, true]]
+    );
+  });
+});
+
+test("a paper whose neighbours are all placeholders gets no Previous or Next link, rather than a link to a placeholder", async () => {
+  await withRolledBackTransaction(async () => {
+    const subject = await insertTestSubject();
+    await insertPlaceholder(subject.id, 2096, "question_paper");
+    await insertPlaceholder(subject.id, 2097, "marking_scheme");
+    await publishSubjectPaper(subject.slug, 2097, "question_paper");
+    await insertPlaceholder(subject.id, 2098, "question_paper");
+
+    assert.deepEqual(await paperPageLinks(subject.slug, 2097, "question_paper"), { related: [], prev: undefined, next: undefined });
+  });
+});
+
+test("search results leave out a published paper whose file record is gone, since it can't be opened either", async () => {
+  await withRolledBackTransaction(async () => {
+    // Publishing refuses a paper with no file, so this only arises from a
+    // hand edit -- but search must still never offer it.
+    const paper = await publishTestPaper("47");
+    await query("delete from files where artifact_id = $1", [paper.artifactId]);
+    const visible = await paper.visibility();
+    assert.equal(visible.results, false);
+    assert.equal(visible.download, false);
   });
 });
 

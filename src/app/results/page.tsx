@@ -1,6 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { listExamSeries, listSubjects, listYears, searchPublicArtifactsPageCached } from "@/lib/db/queries";
+import {
+  countUnrecoveredMatchesCached,
+  listExamSeries,
+  listSubjects,
+  listYears,
+  searchPublicArtifactsPageCached,
+} from "@/lib/db/queries";
 import { artifactTypeLabel, paperVariantLabel } from "@/lib/artifact-naming";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
 import { paperPath } from "@/lib/page-links";
@@ -104,6 +110,19 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
   const rangeStart = total === 0 ? 0 : (page - 1) * limit + 1;
   const rangeEnd = Math.min(page * limit, total);
 
+  // Only when nothing at all can be offered: how many "not yet recovered"
+  // placeholders match, so the student knows the paper isn't just hidden by
+  // their wording. One extra query, and only in this case.
+  const unrecovered =
+    total === 0
+      ? await countUnrecoveredMatchesCached({
+          q: filters.q,
+          series: filters.series,
+          year: filters.year,
+          subject: filters.subject,
+        })
+      : 0;
+
   return (
     <>
       <h1 className="visually-hidden">Search papers</h1>
@@ -184,10 +203,18 @@ export default async function ResultsPage({ searchParams }: ResultsPageProps) {
           written as one expression instead of separate statements, which
           JSX requires since you can't write a plain `if` inside {...}. */}
       {total === 0 ? (
-        <p className="empty-state">
-          No published papers match those filters yet. Try clearing a filter
-          or <Link prefetch={false} href="/browse">browse what&apos;s available</Link>.
-        </p>
+        <>
+          <p className="empty-state">
+            No published papers match those filters yet. Try clearing a filter
+            or <Link prefetch={false} href="/browse">browse what&apos;s available</Link>.
+          </p>
+          {unrecovered > 0 && (
+            <p className="hint">
+              {unrecovered} matching paper{unrecovered === 1 ? " hasn't" : "s haven't"} been recovered yet —{" "}
+              <Link prefetch={false} href="/missing">see what&apos;s missing</Link>.
+            </p>
+          )}
+        </>
       ) : records.length === 0 ? (
         // There ARE matching results overall, but this specific page has
         // none — meaning someone requested a page number past the last

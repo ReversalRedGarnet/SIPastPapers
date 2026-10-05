@@ -5,6 +5,8 @@ import { query, queryOne, queryWithoutRetry, withTransaction } from "./client";
 import {
   APPROVED_RIGHTS_STATUSES,
   IS_CURRENT_FILE,
+  LISTED_PLACEHOLDER,
+  OPENABLE,
   PUBLICLY_VISIBLE,
   QUARANTINE_PREFIX,
   SERVABLE,
@@ -152,8 +154,12 @@ const ARTIFACT_BASE_SELECT = `
  * powers the public-facing pages (search results, "recently added", and
  * an individual paper's page). The command-line tool's own list/bulk
  * features still use the simpler ARTIFACT_BASE_SELECT above.
+ *
+ * `extraColumns` (starting with a comma) adds columns to the select list --
+ * see PUBLIC_ARTIFACT_SELECT_WITH_OPENABLE below.
  */
-const PUBLIC_ARTIFACT_SELECT = `
+function publicArtifactSelect(extraColumns = ""): string {
+  return `
   select
     a.id, a.exam_instance_id, a.subject_id, a.type, a.paper_no, a.title,
     a.status, a.published_at,
@@ -165,7 +171,7 @@ const PUBLIC_ARTIFACT_SELECT = `
     src.source_type as source_type, src.organization as source_organization,
     src.attribution as source_attribution,
     v.status as verification_status,
-    r.rights_status as rights_status
+    r.rights_status as rights_status${extraColumns}
   from artifacts a
   join exam_instances ei on ei.id = a.exam_instance_id
   join exam_series es on es.id = ei.exam_series_id
@@ -211,6 +217,19 @@ const PUBLIC_ARTIFACT_SELECT = `
     limit 1
   ) r on true
 `;
+}
+
+const PUBLIC_ARTIFACT_SELECT = publicArtifactSelect();
+
+/**
+ * PUBLIC_ARTIFACT_SELECT plus `openable`: whether the paper passes OPENABLE,
+ * i.e. a student can open it. Used where placeholders are listed alongside
+ * openable papers but must not be linked to as if they were one (a paper
+ * page's "Related papers" and Previous/Next).
+ */
+const PUBLIC_ARTIFACT_SELECT_WITH_OPENABLE = publicArtifactSelect(`, ${OPENABLE} as openable`);
+
+type PublicArtifactRowWithOpenable = PublicArtifactRow & { openable: boolean };
 
 function hydratePublicRecord(row: PublicArtifactRow): PublicExamRecord {
   return {
@@ -338,7 +357,10 @@ export interface PublicArtifactFilters {
 /**
  * Builds the shared filtering logic (search box, series, year, subject)
  * used by both the plain search below and its paginated version, so the
- * two versions can never disagree about what a filter means.
+ * two versions can never disagree about what a filter means. `visibleWhen`
+ * is which papers may be listed at all: PUBLICLY_VISIBLE (placeholders
+ * included) for the browse-subject page and the sitemap, OPENABLE for the
+ * search results page, LISTED_PLACEHOLDER for its "not recovered yet" note.
  *
  * The keyword search (`q`) is done as a simple "contains this text"
  * database search. That's good enough for how much data this archive
@@ -346,7 +368,10 @@ export interface PublicArtifactFilters {
  * results by relevance and handle multi-word queries better) could be
  * added later, but isn't needed yet.
  */
-function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
+function buildPublicArtifactFilterClauses(
+  filters: PublicArtifactFilters,
+  visibleWhen: string
+): {
   clauses: string[];
   params: (string | number)[];
 } {
@@ -361,7 +386,7 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
   // actual instructions. `$${params.length}` below just calculates which
   // numbered blank to use next, based on how many params have been added
   // to the list so far.
-  const clauses: string[] = [PUBLICLY_VISIBLE];
+  const clauses: string[] = [visibleWhen];
   const params: (string | number)[] = [];
 
   if (filters.series) {
@@ -423,8 +448,14 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
  */
 const PUBLIC_RESULTS_ORDER = "order by ei.year desc, s.canonical_name, a.type, a.paper_no nulls first, a.id";
 
+/**
+ * Every matching paper the public can see, "not yet recovered" placeholders
+ * included -- for the browse-subject page and the sitemap (which itself
+ * keeps only papers with a file). The search results page uses
+ * searchPublicArtifactsPage below, which lists only papers that can be opened.
+ */
 export const searchPublicArtifacts = cache(async (filters: PublicArtifactFilters): Promise<PublicExamRecord[]> => {
-  const { clauses, params } = buildPublicArtifactFilterClauses(filters);
+  const { clauses, params } = buildPublicArtifactFilterClauses(filters, PUBLICLY_VISIBLE);
   const sql = `${PUBLIC_ARTIFACT_SELECT} where ${clauses.join(" and ")} ${PUBLIC_RESULTS_ORDER}`;
   const rows = await query<PublicArtifactRow>(sql, params);
   return rows.map(hydratePublicRecord);
@@ -466,6 +497,12 @@ export interface PublicArtifactPage {
  * everything at once — this is what powers the /results page, so it
  * doesn't have to load hundreds of exam papers onto one screen.
  *
+ * Unlike the search above, it lists only papers a student can open
+ * (OPENABLE): published, with a file, and rights currently approved. A
+ * "not yet recovered" placeholder is never in a page of results or in the
+ * count -- search mustn't offer what can't be opened; browse and /missing
+ * are where the gaps are shown.
+ *
  * If the page number or page size in the URL is invalid or out of range,
  * we quietly fall back to a sensible value instead of showing an error —
  * a results listing shouldn't break just because someone typed a strange
@@ -486,7 +523,7 @@ export async function searchPublicArtifactsPage(
   const page = Math.max(1, Number.isInteger(pagination.page) ? (pagination.page as number) : 1);
   const offset = (page - 1) * limit;
 
-  const { clauses, params } = buildPublicArtifactFilterClauses(filters);
+  const { clauses, params } = buildPublicArtifactFilterClauses(filters, OPENABLE);
   const where = clauses.join(" and ");
 
   // We run two separate queries here: one for this page's results, and
@@ -525,6 +562,32 @@ export async function searchPublicArtifactsPage(
 export const searchPublicArtifactsPageCached = unstable_cache(
   searchPublicArtifactsPage,
   ["search-public-artifacts-page"],
+  { revalidate: 60 }
+);
+
+/**
+ * How many "not yet recovered" placeholders match the same filters -- for
+ * the /results page's note under a search that found nothing it can open.
+ * The page only asks when the search itself found nothing.
+ */
+export async function countUnrecoveredMatches(filters: PublicArtifactFilters): Promise<number> {
+  const { clauses, params } = buildPublicArtifactFilterClauses(filters, LISTED_PLACEHOLDER);
+  const rows = await query<{ total: string }>(
+    `select count(*) as total
+     from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     join exam_series es on es.id = ei.exam_series_id
+     join subjects s on s.id = a.subject_id
+     where ${clauses.join(" and ")}`,
+    params
+  );
+  return Number(rows[0]?.total ?? 0);
+}
+
+/** countUnrecoveredMatches, cached for 60 seconds like the search itself. */
+export const countUnrecoveredMatchesCached = unstable_cache(
+  countUnrecoveredMatches,
+  ["count-unrecovered-matches"],
   { revalidate: 60 }
 );
 
@@ -628,14 +691,20 @@ export const listRecentPublicArtifacts = cache(async (limit: number): Promise<Pu
   return rows.map(hydratePublicRecord);
 });
 
+/**
+ * One paper's page: the paper itself (a "not yet recovered" placeholder
+ * included -- its page says so), and its "Related papers": the other papers
+ * for the same exam, year and subject that a student can open (OPENABLE).
+ * A placeholder is never linked to as related.
+ */
 export const getPublicArtifactBySlug = cache(async (
   seriesCode: string,
   year: number,
   subjectSlug: string,
   slug: string
 ): Promise<{ record: PublicExamRecord; related: PublicExamRecord[] } | undefined> => {
-  const rows = await query<PublicArtifactRow>(
-    `${PUBLIC_ARTIFACT_SELECT}
+  const rows = await query<PublicArtifactRowWithOpenable>(
+    `${PUBLIC_ARTIFACT_SELECT_WITH_OPENABLE}
      where ${PUBLICLY_VISIBLE} and es.code = $1 and ei.year = $2 and ${SUBJECT_SLUG} = $3`,
     [seriesCode, year, subjectSlug]
   );
@@ -646,7 +715,7 @@ export const getPublicArtifactBySlug = cache(async (
   if (!match) return undefined;
 
   const record = hydratePublicRecord(match);
-  const related = rows.filter((r) => r.id !== match.id).map(hydratePublicRecord);
+  const related = rows.filter((r) => r.id !== match.id && r.openable).map(hydratePublicRecord);
 
   return { record, related };
 });
@@ -654,22 +723,27 @@ export const getPublicArtifactBySlug = cache(async (
 /**
  * Every publicly-visible paper for one exam series and subject, across all
  * years, listed oldest-first (the order a reader would naturally browse
- * through them). Used on a paper's detail page to build the "previous /
- * next" links and the "other years for this subject" list, all from one
- * query rather than checking each neighbouring year separately.
+ * through them), each marked with whether a student can open it
+ * (OPENABLE). Used on a paper's detail page to build the "previous /
+ * next" links (openable papers only -- see src/lib/paper-pager.ts) and the
+ * "other years for this subject" list, all from one query rather than
+ * checking each neighbouring year separately.
  */
 export const listSubjectArtifacts = cache(async (
   seriesCode: string,
   subjectSlug: string
-): Promise<PublicExamRecord[]> => {
-  const rows = await query<PublicArtifactRow>(
-    `${PUBLIC_ARTIFACT_SELECT}
+): Promise<SubjectPaper[]> => {
+  const rows = await query<PublicArtifactRowWithOpenable>(
+    `${PUBLIC_ARTIFACT_SELECT_WITH_OPENABLE}
      where ${PUBLICLY_VISIBLE} and es.code = $1 and ${SUBJECT_SLUG} = $2
      order by ei.year asc, a.type asc, a.paper_no asc nulls first`,
     [seriesCode, subjectSlug]
   );
-  return rows.map(hydratePublicRecord);
+  return rows.map((row) => ({ ...hydratePublicRecord(row), openable: row.openable }));
 });
+
+/** A paper in listSubjectArtifacts' list: the public record, plus whether it can be opened. */
+export type SubjectPaper = PublicExamRecord & { openable: boolean };
 
 // --- Command-line tool: builds the "coverage matrix" — a grid showing,
 // for every exam/year/subject combination, whether we have a published

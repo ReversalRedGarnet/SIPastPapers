@@ -11,7 +11,11 @@ export default function robots(): MetadataRoute.Robots {
       // downloads and the "download whole year as a zip" feature. Letting
       // a search engine crawl the zip-download route would make it
       // rebuild a fresh zip file on every single crawl hit, for no benefit.
-      disallow: "/api/",
+      //
+      // /results (search) is never stored, so every crawl of it is a
+      // function run, and its pages are already marked noindex: the browse
+      // and paper pages are what search engines should crawl.
+      disallow: ["/api/", "/results"],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,
   };
