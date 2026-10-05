@@ -6,6 +6,7 @@ import { getPublicArtifactBySlug, listSubjectArtifacts } from "@/lib/db/queries"
 import { artifactListLabel } from "@/lib/artifact-naming";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
 import { browseSubjectPath, paperPath } from "@/lib/page-links";
+import { adjacentOpenablePapers } from "@/lib/paper-pager";
 import { CONTACT_EMAIL, SITE_NAME, SITE_URL } from "@/lib/site";
 import { PdfPreview } from "@/components/PdfPreview";
 import { ReportStatus } from "@/components/ReportStatus";
@@ -125,16 +126,9 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
     : null;
 
   const subjectArtifacts = await listSubjectArtifacts(record.examSeriesCode, record.subjectSlug);
-  // `.findIndex()` is like `.find()` (see src/app/browse/[series]/page.tsx)
-  // but hands back the matching item's position in the list (a number,
-  // starting at 0) instead of the item itself -- useful here to look at the
-  // items right before/after it.
-  const currentIndex = subjectArtifacts.findIndex((r) => r.id === record.id);
-  const prevPaper = currentIndex > 0 ? subjectArtifacts[currentIndex - 1] : undefined;
-  const nextPaper =
-    currentIndex >= 0 && currentIndex < subjectArtifacts.length - 1
-      ? subjectArtifacts[currentIndex + 1]
-      : undefined;
+  // The nearest paper on each side that can be opened -- placeholders are
+  // skipped (see src/lib/paper-pager.ts).
+  const { prev: prevPaper, next: nextPaper } = adjacentOpenablePapers(subjectArtifacts, record.id);
 
   // Reading inside-out: `.filter()` keeps only other years' papers,
   // `.map()` reduces each one down to just its year number, `new Set(...)`

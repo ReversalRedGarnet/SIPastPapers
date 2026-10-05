@@ -105,3 +105,10 @@ export const PUBLICLY_VISIBLE = `(${SERVABLE} or (a.status = 'not_yet_recovered'
   not exists (select 1 from files fp where fp.artifact_id = a.id)
   or (${RIGHTS_CURRENTLY_APPROVED} and ${NO_QUARANTINED_FILES})
 )))`;
+
+/**
+ * SQL: a "not yet recovered" placeholder the public may see (the
+ * placeholder half of PUBLICLY_VISIBLE). Counted for the note under a
+ * search that found nothing it can offer.
+ */
+export const LISTED_PLACEHOLDER = `(a.status = 'not_yet_recovered' and ${PUBLICLY_VISIBLE})`;

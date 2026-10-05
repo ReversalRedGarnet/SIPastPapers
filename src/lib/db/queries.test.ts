@@ -28,6 +28,7 @@ import { SITE_URL } from "@/lib/site";
 import { buildSitemapEntries } from "@/lib/sitemap-entries";
 import { browseSubjectPath, paperPath } from "@/lib/page-links";
 import { deriveMissingPaperRows } from "@/lib/missing-papers";
+import { adjacentOpenablePapers } from "@/lib/paper-pager";
 import { PUBLICLY_VISIBLE } from "./visibility";
 import { collectPublicUrls } from "../../../scripts/public-urls";
 import type { CoverageCell, FileRelocation } from "@/lib/db/queries";
@@ -1038,6 +1039,11 @@ test("search results list only papers that can be opened: a placeholder is never
     }
     assert.equal((await queries.searchPublicArtifactsPage({}, { limit: 1 })).total, allBefore, "the unfiltered count is unchanged");
 
+    // The "N matching papers haven't been recovered yet" note counts it.
+    assert.equal(await queries.countUnrecoveredMatches({ q: `${word} marking scheme` }), 1);
+    assert.equal(await queries.countUnrecoveredMatches(filters), 1);
+    assert.equal(await queries.countUnrecoveredMatches({ q: `${word} 2098` }), 0, "no placeholder in that year");
+
     // Browse still lists it, as a placeholder with no file...
     const browse = await queries.searchPublicArtifacts(filters);
     assert.deepEqual(new Set(browse.map((r) => r.id)), new Set([publishedId, placeholderId]));
@@ -1050,6 +1056,96 @@ test("search results list only papers that can be opened: a placeholder is never
       (r) => r.examSeriesCode === "sisc-l1" && r.year === 2099 && r.subjectSlug === subject.slug
     );
     assert.deepEqual(missing?.missingArtifactTypes, ["marking_scheme"]);
+  });
+});
+
+/** The sisc-l1 exam instance for `year`, created if this test database has none yet. */
+async function examInstanceId(year: number): Promise<string> {
+  await query(
+    `insert into exam_instances (exam_series_id, year)
+     select id, $1 from exam_series where code = 'sisc-l1'
+     on conflict (exam_series_id, year) do nothing`,
+    [year]
+  );
+  const row = await queryOne<{ id: string }>(
+    `select ei.id from exam_instances ei join exam_series es on es.id = ei.exam_series_id
+     where es.code = 'sisc-l1' and ei.year = $1`,
+    [year]
+  );
+  return row!.id;
+}
+
+/** A published, openable sisc-l1 paper for a test subject. */
+async function publishSubjectPaper(subjectSlug: string, year: number, artifactType: ArtifactType): Promise<string> {
+  const { artifactId } = await queries.ingestArtifact({
+    examSeriesCode: "sisc-l1",
+    year,
+    subjectSlug,
+    artifactType,
+    paperNo: null,
+    file: { buffer: Buffer.from(`%PDF-1.4\n%pager-${subjectSlug}-${year}-${artifactType}\n`), mime: "application/pdf" },
+  });
+  await queries.approveRights(artifactId, {
+    basis: "teacher-verified",
+    approvedBy: "Test Verifier",
+    evidenceUri: `file://evidence/pager-${year}-${artifactType}.pdf`,
+  });
+  assert.ok(!("missing" in (await queries.publishArtifact(artifactId))), "test paper should publish");
+  return artifactId;
+}
+
+/** A "not yet recovered" placeholder (no file) for a test subject, made the way the real ones were. */
+async function insertPlaceholder(subjectId: string, year: number, artifactType: ArtifactType): Promise<string> {
+  const id = randomUUID();
+  await query(
+    `insert into artifacts (id, exam_instance_id, subject_id, type, paper_no, title, status, published_at)
+     values ($1, $2, $3, $4, null, $5, 'not_yet_recovered', null)`,
+    [id, await examInstanceId(year), subjectId, artifactType, `Pager test ${artifactType} ${year}, not yet recovered`]
+  );
+  return id;
+}
+
+/** What one paper's page links to: Related papers, and Previous/Next. */
+async function paperPageLinks(subjectSlug: string, year: number, artifactType: ArtifactType) {
+  const page = await queries.getPublicArtifactBySlug("sisc-l1", year, subjectSlug, artifactSlug({ artifactType, paperNo: null }));
+  assert.ok(page, `the ${year} ${artifactType} page should exist`);
+  const { prev, next } = adjacentOpenablePapers(await queries.listSubjectArtifacts("sisc-l1", subjectSlug), page!.record.id);
+  return { related: page!.related.map((r) => r.id), prev: prev?.id, next: next?.id };
+}
+
+test("a paper page never links to a placeholder: Related papers leave it out, and Previous/Next skip to the nearest paper that can be opened", async () => {
+  await withRolledBackTransaction(async () => {
+    const subject = await insertTestSubject();
+    // In the subject's reading order (year, then type):
+    const a = await publishSubjectPaper(subject.slug, 2095, "question_paper");
+    const p1 = await insertPlaceholder(subject.id, 2096, "question_paper");
+    const p2 = await insertPlaceholder(subject.id, 2097, "marking_scheme");
+    const b = await publishSubjectPaper(subject.slug, 2097, "question_paper");
+    const p3 = await insertPlaceholder(subject.id, 2098, "question_paper");
+    const c = await publishSubjectPaper(subject.slug, 2099, "question_paper");
+
+    assert.deepEqual(await paperPageLinks(subject.slug, 2097, "question_paper"), { related: [], prev: a, next: c });
+    // A placeholder's own page still works, and links only to openable papers.
+    assert.deepEqual(await paperPageLinks(subject.slug, 2097, "marking_scheme"), { related: [b], prev: a, next: b });
+
+    // "More papers in this subject" is built from the same list, which still has every placeholder.
+    const list = await queries.listSubjectArtifacts("sisc-l1", subject.slug);
+    assert.deepEqual(
+      list.map((r) => [r.id, r.openable]),
+      [[a, true], [p1, false], [p2, false], [b, true], [p3, false], [c, true]]
+    );
+  });
+});
+
+test("a paper whose neighbours are all placeholders gets no Previous or Next link, rather than a link to a placeholder", async () => {
+  await withRolledBackTransaction(async () => {
+    const subject = await insertTestSubject();
+    await insertPlaceholder(subject.id, 2096, "question_paper");
+    await insertPlaceholder(subject.id, 2097, "marking_scheme");
+    await publishSubjectPaper(subject.slug, 2097, "question_paper");
+    await insertPlaceholder(subject.id, 2098, "question_paper");
+
+    assert.deepEqual(await paperPageLinks(subject.slug, 2097, "question_paper"), { related: [], prev: undefined, next: undefined });
   });
 });
 

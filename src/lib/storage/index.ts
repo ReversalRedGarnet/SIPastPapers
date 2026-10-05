@@ -57,14 +57,11 @@ export function getStorageProvider(): StorageProvider {
     const accessKeyId = requireEnv("R2_ACCESS_KEY_ID");
     // Logs which storage backend actually ended up being used, so it's
     // easy to confirm at a glance. This only prints once (the result gets
-    // cached above), not on every single request. It never logs the secret
-    // access key itself — just the last 4 characters of the access key ID,
-    // which is enough to tell two different accounts apart in the logs
-    // without exposing anything sensitive.
-    console.log(
-      `[storage] STORAGE_BACKEND=r2 -> R2Storage (bucket="${bucketName}", accountId="${accountId}", ` +
-        `endpoint="https://${accountId}.r2.cloudflarestorage.com", accessKeyId="...${accessKeyId.slice(-4)}")`
-    );
+    // cached above), not on every single request. It logs only the bucket
+    // name and the last 4 characters of the access key ID -- enough to tell
+    // which key is in use (e.g. the read-only one) -- never the account ID,
+    // the endpoint (which contains the account ID) or the secret key.
+    console.log(`[storage] STORAGE_BACKEND=r2 -> R2Storage (bucket="${bucketName}", accessKeyId="...${accessKeyId.slice(-4)}")`);
     instance = new R2Storage({
       accountId,
       accessKeyId,
