@@ -84,6 +84,16 @@ export const NO_QUARANTINED_FILES = `not exists (
 export const SERVABLE = `(a.status = 'published' and ${RIGHTS_CURRENTLY_APPROVED} and ${NO_QUARANTINED_FILES})`;
 
 /**
+ * SQL: servable and with a file to serve -- the papers a student can
+ * actually open. (Its current file is then servable too: SERVABLE already
+ * rules out any file in quarantine.) The search results page lists only
+ * these, so it never offers something that can't be opened; browse and
+ * /missing still show "not yet recovered" placeholders (PUBLICLY_VISIBLE),
+ * which is where a gap is meant to be seen.
+ */
+export const OPENABLE = `(${SERVABLE} and exists (select 1 from files fo where fo.artifact_id = a.id))`;
+
+/**
  * SQL: everything the public may see -- servable papers, plus "not yet
  * recovered" placeholders, which are listed so a gap is visible. A
  * placeholder normally has no file, so no rights question arises; one that

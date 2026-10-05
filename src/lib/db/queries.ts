@@ -5,6 +5,7 @@ import { query, queryOne, queryWithoutRetry, withTransaction } from "./client";
 import {
   APPROVED_RIGHTS_STATUSES,
   IS_CURRENT_FILE,
+  OPENABLE,
   PUBLICLY_VISIBLE,
   QUARANTINE_PREFIX,
   SERVABLE,
@@ -338,7 +339,10 @@ export interface PublicArtifactFilters {
 /**
  * Builds the shared filtering logic (search box, series, year, subject)
  * used by both the plain search below and its paginated version, so the
- * two versions can never disagree about what a filter means.
+ * two versions can never disagree about what a filter means. `visibleWhen`
+ * is which papers may be listed at all: PUBLICLY_VISIBLE (placeholders
+ * included) for the browse-subject page and the sitemap, OPENABLE for the
+ * search results page.
  *
  * The keyword search (`q`) is done as a simple "contains this text"
  * database search. That's good enough for how much data this archive
@@ -346,7 +350,10 @@ export interface PublicArtifactFilters {
  * results by relevance and handle multi-word queries better) could be
  * added later, but isn't needed yet.
  */
-function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
+function buildPublicArtifactFilterClauses(
+  filters: PublicArtifactFilters,
+  visibleWhen: string
+): {
   clauses: string[];
   params: (string | number)[];
 } {
@@ -361,7 +368,7 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
   // actual instructions. `$${params.length}` below just calculates which
   // numbered blank to use next, based on how many params have been added
   // to the list so far.
-  const clauses: string[] = [PUBLICLY_VISIBLE];
+  const clauses: string[] = [visibleWhen];
   const params: (string | number)[] = [];
 
   if (filters.series) {
@@ -423,8 +430,14 @@ function buildPublicArtifactFilterClauses(filters: PublicArtifactFilters): {
  */
 const PUBLIC_RESULTS_ORDER = "order by ei.year desc, s.canonical_name, a.type, a.paper_no nulls first, a.id";
 
+/**
+ * Every matching paper the public can see, "not yet recovered" placeholders
+ * included -- for the browse-subject page and the sitemap (which itself
+ * keeps only papers with a file). The search results page uses
+ * searchPublicArtifactsPage below, which lists only papers that can be opened.
+ */
 export const searchPublicArtifacts = cache(async (filters: PublicArtifactFilters): Promise<PublicExamRecord[]> => {
-  const { clauses, params } = buildPublicArtifactFilterClauses(filters);
+  const { clauses, params } = buildPublicArtifactFilterClauses(filters, PUBLICLY_VISIBLE);
   const sql = `${PUBLIC_ARTIFACT_SELECT} where ${clauses.join(" and ")} ${PUBLIC_RESULTS_ORDER}`;
   const rows = await query<PublicArtifactRow>(sql, params);
   return rows.map(hydratePublicRecord);
@@ -466,6 +479,12 @@ export interface PublicArtifactPage {
  * everything at once — this is what powers the /results page, so it
  * doesn't have to load hundreds of exam papers onto one screen.
  *
+ * Unlike the search above, it lists only papers a student can open
+ * (OPENABLE): published, with a file, and rights currently approved. A
+ * "not yet recovered" placeholder is never in a page of results or in the
+ * count -- search mustn't offer what can't be opened; browse and /missing
+ * are where the gaps are shown.
+ *
  * If the page number or page size in the URL is invalid or out of range,
  * we quietly fall back to a sensible value instead of showing an error —
  * a results listing shouldn't break just because someone typed a strange
@@ -486,7 +505,7 @@ export async function searchPublicArtifactsPage(
   const page = Math.max(1, Number.isInteger(pagination.page) ? (pagination.page as number) : 1);
   const offset = (page - 1) * limit;
 
-  const { clauses, params } = buildPublicArtifactFilterClauses(filters);
+  const { clauses, params } = buildPublicArtifactFilterClauses(filters, OPENABLE);
   const where = clauses.join(" and ");
 
   // We run two separate queries here: one for this page's results, and
