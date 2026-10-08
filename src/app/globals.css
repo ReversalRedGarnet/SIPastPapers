@@ -715,6 +715,15 @@ th {
     letter-spacing: 0.02em;
   }
 
+  /* Several badges in one cell (/missing's "Missing" types): wrap them
+     inside the card, beside the label, instead of running past its edge. */
+  .data-table .badge-list {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
   .data-table td:last-child {
     justify-content: flex-start;
     gap: 1rem;

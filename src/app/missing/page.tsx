@@ -96,11 +96,15 @@ export default async function MissingPapersPage() {
                       <td data-label="Year">{row.year}</td>
                       <td data-label="Subject">{row.subjectName}</td>
                       <td data-label="Missing">
-                        {row.missingArtifactTypes.map((type) => (
-                          <Badge key={type} tone="neutral">
-                            {artifactTypeLabel(type)}
-                          </Badge>
-                        ))}
+                        {/* One wrapper, so on a phone the badges wrap inside the
+                            card (see .badge-list in globals.css). */}
+                        <span className="badge-list">
+                          {row.missingArtifactTypes.map((type) => (
+                            <Badge key={type} tone="neutral">
+                              {artifactTypeLabel(type)}
+                            </Badge>
+                          ))}
+                        </span>
                       </td>
                       <td>
                         <a
