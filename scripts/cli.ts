@@ -18,6 +18,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import {
   approveRights,
+  fillPlaceholder,
   getArtifactInstance,
   getArtifactStatus,
   getCoverageMatrix,
@@ -27,12 +28,14 @@ import {
   listPublishedWithUnapprovedRights,
   listServableYearInstances,
   listStoredFiles,
+  planPlaceholderFill,
   prepareArtifactPurge,
   publishArtifact,
   purgeArtifactFiles,
   unpublishArtifact,
   type CoverageCell,
   type CoverageStatus,
+  type PaperRowState,
   type QuarantineResult,
   type StoredFile,
 } from "@/lib/db/queries";
@@ -250,6 +253,88 @@ async function runIngest(args: ParsedArgs): Promise<void> {
   } else {
     await ingestSingleFile(target, common, args.flags, dryRun);
   }
+}
+
+// --- fill-placeholder -------------------------------------------------------
+
+const FILL_PLACEHOLDER_USAGE =
+  "Usage: fill-placeholder <file.pdf> --series <code> --year <yyyy> --subject <slug> [--type <type>] [--paper-no <no>] [--source <org>] [--source-url <url>] [--attribution <text>] [--confirm]";
+
+function printRowState(label: string, state: PaperRowState): void {
+  console.log(`${label}: "${state.title}" (id ${state.artifactId})`);
+  console.log(`  status:  ${state.status}`);
+  if (state.files.length === 0) console.log("  file:    none");
+  for (const f of state.files) {
+    console.log(`  file:    ${f.storageKey}  (sha256 ${shortHash(f.sha256)}..., ${formatBytes(f.bytes)})`);
+  }
+  console.log(`  rights:  ${state.rightsStatus ?? "none recorded"}`);
+  console.log(`  sources: ${state.sources}`);
+}
+
+/**
+ * Attaches a PDF to an existing "not yet recovered" placeholder (which
+ * ingest refuses as a duplicate). Dry run unless --confirm. See
+ * fillPlaceholder in src/lib/db/queries.ts for what it refuses.
+ */
+async function runFillPlaceholder(args: ParsedArgs): Promise<void> {
+  const filePath = args.positional[0];
+  if (!filePath) fail(FILL_PLACEHOLDER_USAGE);
+  const confirm = Boolean(args.flags.confirm);
+  if (confirm && args.flags["dry-run"]) fail("--dry-run and --confirm can't be used together.");
+  const common = parseIngestCommonFlags(args.flags);
+  const artifactType = (args.flags.type ?? "question_paper") as ArtifactType;
+  if (!VALID_TYPES.includes(artifactType)) {
+    fail(`Unknown --type: ${artifactType} (expected one of ${VALID_TYPES.join(", ")})`);
+  }
+
+  let buffer: Buffer;
+  try {
+    buffer = readPdfFileOrThrow(filePath);
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+  const input = {
+    examSeriesCode: common.series,
+    year: common.year,
+    subjectSlug: common.subject,
+    artifactType,
+    paperNo: args.flags["paper-no"] ?? null,
+    file: { buffer, mime: "application/pdf" },
+    sourceOrganization: common.source,
+    sourceUrl: common.sourceUrl,
+    attribution: common.attribution,
+  };
+
+  if (!confirm) {
+    const plan = await planPlaceholderFill(input);
+    printRowState("Before", plan.before);
+    console.log(`\nWould store: ${plan.storageKey}  (sha256 ${shortHash(plan.sha256)}..., ${formatBytes(plan.bytes)})`);
+    if (plan.stored === "same file") console.log("  (these exact bytes are already stored there, from an earlier attempt -- they'd be reused)");
+    if (plan.refusals.length > 0) {
+      console.log(`\nREFUSED -- nothing would be changed:\n${plan.refusals.map((r) => `  - ${r}`).join("\n")}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(
+      `Would set:   status pending_review; rights ${plan.before.rightsStatus ?? "pending_institutional_approval (new record)"}` +
+        (input.sourceOrganization ? `; source "${input.sourceOrganization}"` : "")
+    );
+    console.log("\nDry run -- nothing changed. Re-run with --confirm to attach the file.");
+    return;
+  }
+
+  const result = await fillPlaceholder(input);
+  if ("refusals" in result) {
+    printRowState("Row", result.before);
+    fail(`refused -- nothing was changed:\n${result.refusals.map((r) => `  - ${r}`).join("\n")}`);
+  }
+  printRowState("Before", result.before);
+  console.log();
+  printRowState("After", result.after);
+  console.log(
+    `\nNext: approve-rights ${result.after.artifactId} --basis <...> --approved-by <name> --evidence-uri <uri>, ` +
+      `then publish ${result.after.artifactId}. Until it's published the paper isn't public.`
+  );
 }
 
 // --- approve-rights ---------------------------------------------------------
@@ -993,6 +1078,15 @@ Commands:
       number (or why it can't be parsed / isn't a valid PDF) and makes NO
       database or storage changes. Run this before any real batch.
 
+  fill-placeholder <file.pdf> --series <code> --year <yyyy> --subject <slug> [--type <type>] [--paper-no <no>] [--source <org>] [--source-url <url>] [--attribution <text>] [--confirm]
+      Attach a PDF to an EXISTING "not yet recovered" placeholder (which
+      ingest refuses as a duplicate). Same flags as ingest; the file is
+      stored at the key ingest would use. Without --confirm this only
+      prints the row and what would change. Refuses a row that isn't a
+      placeholder (including any published paper), one that already has a
+      file or a rights decision, and never overwrites a stored file.
+      Rights stay pending: run approve-rights, then publish, afterwards.
+
   approve-rights <artifact-id> --basis <${BASIS_CHOICES.join("|")}> --approved-by <name> --evidence-uri <uri> [--rights-status permission_granted|public_domain_or_expired] [--expiry <yyyy-mm-dd>] [--notes <text>]
       Record the institutional rights decision. Required before publish.
 
@@ -1108,6 +1202,9 @@ async function main(): Promise<void> {
   switch (command) {
     case "ingest":
       await runIngest(args);
+      break;
+    case "fill-placeholder":
+      await runFillPlaceholder(args);
       break;
     case "approve-rights":
       await runApproveRights(args);

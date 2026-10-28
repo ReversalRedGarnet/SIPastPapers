@@ -929,6 +929,52 @@ function sha256Hex(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/** Records where a paper came from (--source etc.) as its primary source -- ingest and fill-placeholder alike. */
+async function insertPrimarySource(
+  artifactId: string,
+  source: { sourceOrganization?: string | null; sourceUrl?: string | null; attribution?: string | null }
+): Promise<void> {
+  if (!source.sourceOrganization) return;
+  const sourceId = randomUUID();
+  const inferredType = /mehrd/i.test(source.sourceOrganization) ? "mehrd" : "other";
+  await query(
+    `insert into sources (id, source_type, organization, person_label, url, attribution)
+     values ($1, $2, $3, null, $4, $5)`,
+    [sourceId, inferredType, source.sourceOrganization, source.sourceUrl ?? null, source.attribution ?? null]
+  );
+  await query(
+    `insert into artifact_sources (artifact_id, source_id, is_primary, notes)
+     values ($1, $2, true, null)`,
+    [artifactId, sourceId]
+  );
+}
+
+/**
+ * Where a paper's file is stored: built from the paper's own details, so
+ * ingest and fill-placeholder always agree on it.
+ */
+function storageKeyFor(
+  series: ExamSeriesRow,
+  subject: SubjectRow,
+  paper: { year: number; artifactType: ArtifactType; paperNo: string | null }
+): string {
+  const subjectSlug = subject.subject_code ?? subject.id;
+  const fileName = generateCanonicalFileName({
+    examSeriesSlug: series.code,
+    year: paper.year,
+    subjectSlug,
+    artifactType: paper.artifactType,
+    paperNo: paper.paperNo,
+  });
+  return buildStorageKey({
+    examSeriesSlug: series.code,
+    year: paper.year,
+    subjectSlug,
+    artifactType: artifactTypeSlug(paper.artifactType),
+    fileName,
+  });
+}
+
 /**
  * Saves a newly ingested file to storage, never replacing anything that's
  * already there (storage itself refuses -- see StorageKeyExistsError).
@@ -1015,20 +1061,7 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
   // even one byte produces a completely different one -- useful here for
   // detecting duplicate uploads and confirming a file hasn't been altered.
   const sha256 = sha256Hex(input.file.buffer);
-  const fileName = generateCanonicalFileName({
-    examSeriesSlug: series.code,
-    year: input.year,
-    subjectSlug: subject.subject_code ?? subject.id,
-    artifactType: input.artifactType,
-    paperNo: input.paperNo,
-  });
-  const storageKey = buildStorageKey({
-    examSeriesSlug: series.code,
-    year: input.year,
-    subjectSlug: subject.subject_code ?? subject.id,
-    artifactType: artifactTypeSlug(input.artifactType),
-    fileName,
-  });
+  const storageKey = storageKeyFor(series, subject, input);
 
   const existing = await queryOne<{ id: string }>(
     `select a.id from artifacts a
@@ -1092,20 +1125,7 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
       [randomUUID(), artifactId, storageKey, sha256, input.file.mime, input.file.buffer.byteLength]
     );
 
-    if (input.sourceOrganization) {
-      const sourceId = randomUUID();
-      const inferredType = /mehrd/i.test(input.sourceOrganization) ? "mehrd" : "other";
-      await query(
-        `insert into sources (id, source_type, organization, person_label, url, attribution)
-         values ($1, $2, $3, null, $4, $5)`,
-        [sourceId, inferredType, input.sourceOrganization, input.sourceUrl ?? null, input.attribution ?? null]
-      );
-      await query(
-        `insert into artifact_sources (artifact_id, source_id, is_primary, notes)
-         values ($1, $2, true, null)`,
-        [artifactId, sourceId]
-      );
-    }
+    if (input.sourceOrganization) await insertPrimarySource(artifactId, input);
 
     await query(
       `insert into rights_records
@@ -1128,6 +1148,187 @@ export async function ingestArtifact(input: IngestArtifactInput): Promise<Ingest
 
     return { artifactId, title, storageKey, sha256 };
   });
+}
+
+// --- Command-line tool: attaching a file to a "not yet recovered" placeholder ---
+//
+// A placeholder is already an artifact row (status not_yet_recovered, no
+// file), so ingest refuses it as a duplicate. fill-placeholder attaches the
+// file to that existing row instead -- and to nothing else.
+
+export interface PlaceholderFillInput {
+  examSeriesCode: string;
+  year: number;
+  subjectSlug: string;
+  artifactType: ArtifactType;
+  paperNo: string | null;
+  file: { buffer: Buffer; mime: string };
+  sourceOrganization?: string | null;
+  sourceUrl?: string | null;
+  attribution?: string | null;
+}
+
+/** One paper's row as fill-placeholder shows it, before and after. */
+export interface PaperRowState {
+  artifactId: string;
+  title: string;
+  status: ArtifactStatus;
+  files: { storageKey: string; sha256: string; bytes: number }[];
+  /** The latest rights record's status, or null when it has none. */
+  rightsStatus: RightsStatus | null;
+  sources: number;
+}
+
+export interface PlaceholderFillPlan {
+  before: PaperRowState;
+  storageKey: string;
+  sha256: string;
+  bytes: number;
+  /** What's at storageKey already: nothing, these exact bytes (an earlier attempt's leftover, reused), or something else. */
+  stored: "nothing" | "same file" | "different file";
+  /** Why the fill would be refused; empty when it can go ahead. */
+  refusals: string[];
+}
+
+async function readPaperRowState(artifactId: string): Promise<PaperRowState> {
+  const row = await queryOne<{ id: string; title: string; status: ArtifactStatus; rights_status: RightsStatus | null; sources: string }>(
+    `select a.id, a.title, a.status,
+       (select rr.rights_status from rights_records rr where rr.artifact_id = a.id order by rr.created_at desc limit 1) as rights_status,
+       (select count(*) from artifact_sources x where x.artifact_id = a.id) as sources
+     from artifacts a where a.id = $1`,
+    [artifactId]
+  );
+  if (!row) throw new Error(`Unknown artifact: ${artifactId}`);
+  const files = await query<{ storage_key: string; sha256: string; bytes: string }>(
+    "select storage_key, sha256, bytes from files where artifact_id = $1 order by created_at, id",
+    [artifactId]
+  );
+  return {
+    artifactId: row.id,
+    title: row.title,
+    status: row.status,
+    files: files.map((f) => ({ storageKey: f.storage_key, sha256: f.sha256, bytes: Number(f.bytes) })),
+    rightsStatus: row.rights_status,
+    sources: Number(row.sources),
+  };
+}
+
+/** Why this row can't be filled (empty if it can) -- checked in the plan, and again under lock before writing. */
+function placeholderFillRefusals(state: PaperRowState, input: PlaceholderFillInput): string[] {
+  const refusals: string[] = [];
+  if (state.status === "published") {
+    refusals.push("it is published -- fill-placeholder never changes a published paper");
+  } else if (state.status !== "not_yet_recovered") {
+    refusals.push(`it isn't a "not yet recovered" placeholder (its status is ${state.status})`);
+  }
+  if (state.files.length > 0) {
+    refusals.push(`it already has a file (${state.files.map((f) => f.storageKey).join(", ")}) -- fill-placeholder never replaces a file`);
+  }
+  if (state.rightsStatus !== null && state.rightsStatus !== "pending_institutional_approval") {
+    refusals.push(
+      `it already has a rights decision (${state.rightsStatus}); rights must be approved for the file itself, after it's attached`
+    );
+  }
+  if (input.sourceOrganization && state.sources > 0) {
+    refusals.push("it already has a source recorded; leave out --source");
+  }
+  return refusals;
+}
+
+/**
+ * What fill-placeholder would do, without changing anything: finds the
+ * placeholder row for these paper details, works out the file's storage key
+ * (the same one ingest would use), and lists every reason to refuse.
+ * Reads the database and storage only.
+ */
+export async function planPlaceholderFill(input: PlaceholderFillInput): Promise<PlaceholderFillPlan> {
+  const series = await queryOne<ExamSeriesRow>("select * from exam_series where code = $1", [input.examSeriesCode]);
+  if (!series) throw new Error(`Unknown exam series: ${input.examSeriesCode}`);
+  const subject = await queryOne<SubjectRow>("select * from subjects where subject_code = $1", [input.subjectSlug]);
+  if (!subject) throw new Error(`Unknown subject: ${input.subjectSlug}`);
+
+  const row = await queryOne<{ id: string }>(
+    `select a.id from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     where ei.exam_series_id = $1 and ei.year = $2 and a.subject_id = $3 and a.type = $4
+       and ((a.paper_no is null and $5::text is null) or a.paper_no = $5::text)`,
+    [series.id, input.year, subject.id, input.artifactType, input.paperNo]
+  );
+  if (!row) {
+    throw new Error(
+      `No paper is recorded for ${input.examSeriesCode} ${input.year} ${input.subjectSlug} ${input.artifactType}` +
+        `${input.paperNo ? ` paper ${input.paperNo}` : ""}. fill-placeholder only attaches a file to an existing ` +
+        `"not yet recovered" placeholder; use ingest for a new paper.`
+    );
+  }
+
+  const before = await readPaperRowState(row.id);
+  const storageKey = storageKeyFor(series, subject, input);
+  const sha256 = sha256Hex(input.file.buffer);
+  const storage = getStorageProvider();
+  let stored: PlaceholderFillPlan["stored"] = "nothing";
+  if (await storage.exists(storageKey)) {
+    const existing = await storage.get(storageKey);
+    stored = existing && sha256Hex(existing) === sha256 ? "same file" : "different file";
+  }
+
+  const refusals = placeholderFillRefusals(before, input);
+  if (stored === "different file") {
+    refusals.push(`storage already holds a different file at ${storageKey} -- fill-placeholder never overwrites a stored file`);
+  }
+  return { before, storageKey, sha256, bytes: input.file.buffer.byteLength, stored, refusals };
+}
+
+/**
+ * Attaches a file to a "not yet recovered" placeholder, after the same
+ * checks as planPlaceholderFill (refusing if any fails). Stores the file
+ * at the key ingest would use, never replacing anything already stored;
+ * then, in one transaction with the row locked and re-checked, records the
+ * file (hash, size, type), sets the status to pending_review -- exactly
+ * where a fresh ingest starts -- and adds a pending rights record if it has
+ * none. Rights stay pending: approve-rights and publish are separate steps,
+ * as after ingest. Until it's published, the paper isn't public at all.
+ */
+export async function fillPlaceholder(
+  input: PlaceholderFillInput
+): Promise<{ refusals: string[]; before: PaperRowState } | { before: PaperRowState; after: PaperRowState; storageKey: string; sha256: string }> {
+  const plan = await planPlaceholderFill(input);
+  if (plan.refusals.length > 0) return { refusals: plan.refusals, before: plan.before };
+  const { before, storageKey, sha256 } = plan;
+
+  await putWithoutOverwriting(storageKey, input.file, sha256, before.title);
+
+  await withTransaction(async () => {
+    await query("select id from artifacts where id = $1 for update", [before.artifactId]);
+    const current = await readPaperRowState(before.artifactId);
+    const refusals = placeholderFillRefusals(current, input);
+    if (refusals.length > 0) {
+      throw new Error(`The row changed while the file was being stored: ${refusals.join("; ")}. Nothing was recorded.`);
+    }
+
+    await query("update artifacts set status = 'pending_review' where id = $1", [before.artifactId]);
+    await query(
+      `insert into files (id, artifact_id, storage_key, sha256, mime, bytes)
+       values ($1, $2, $3, $4, $5, $6)`,
+      [randomUUID(), before.artifactId, storageKey, sha256, input.file.mime, input.file.buffer.byteLength]
+    );
+    if (current.rightsStatus === null) {
+      await query(
+        `insert into rights_records
+           (id, artifact_id, rights_status, basis, evidence_uri, approved_by, approved_at, expiry_date, notes)
+         values ($1, $2, 'pending_institutional_approval', null, null, null, null, null, null)`,
+        [randomUUID(), before.artifactId]
+      );
+    }
+    if (input.sourceOrganization) await insertPrimarySource(before.artifactId, input);
+    await query(
+      `insert into audit_events (id, actor_id, event_type, object_type, object_id, metadata)
+       values ($1, null, 'placeholder_filled', 'artifact', $2, $3)`,
+      [randomUUID(), before.artifactId, JSON.stringify({ title: before.title, sha256, storageKey })]
+    );
+  });
+
+  return { before, after: await readPaperRowState(before.artifactId), storageKey, sha256 };
 }
 
 // --- Serving files for download — a direct PDF download must always work --

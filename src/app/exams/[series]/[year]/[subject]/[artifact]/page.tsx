@@ -7,7 +7,7 @@ import { artifactListLabel } from "@/lib/artifact-naming";
 import { formatBytes, seriesDisplayLabel } from "@/lib/format";
 import { browseSubjectPath, paperPath } from "@/lib/page-links";
 import { adjacentOpenablePapers } from "@/lib/paper-pager";
-import { CONTACT_EMAIL, SITE_NAME, SITE_URL } from "@/lib/site";
+import { ATTACHMENT_REQUEST, CONTACT_EMAIL, SITE_NAME, SITE_URL } from "@/lib/site";
 import { PdfPreview } from "@/components/PdfPreview";
 import { ReportStatus } from "@/components/ReportStatus";
 import { CONTACT_MAX_LENGTH, DESCRIPTION_MAX_LENGTH, HONEYPOT_FIELD } from "@/lib/report-form";
@@ -207,10 +207,10 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
           ) : (
             <p className="empty-state">
               This paper has not yet been recovered for the archive. It is
-              listed so the gap is visible rather than hidden. Have this
-              one?{" "}
-              <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`I have: ${seriesLabel} ${record.subject} ${record.year} — ${typeLabel}`)}`}>
-                Email it to {CONTACT_EMAIL}
+              listed so the gap is visible rather than hidden. Do you have
+              this paper? Email it to us as an attachment:{" "}
+              <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`I have: ${seriesLabel} ${record.subject} ${record.year} — ${typeLabel}`)}&body=${encodeURIComponent(ATTACHMENT_REQUEST)}`}>
+                {CONTACT_EMAIL}
               </a>
               .
             </p>

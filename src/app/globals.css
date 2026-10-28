@@ -223,6 +223,12 @@ main {
   color: var(--chrome-fg);
 }
 
+/* The independence line: a full-width line of its own under the links. */
+.site-footer__note {
+  flex: 1 0 100%;
+  margin: 0;
+}
+
 .site-footer a:hover {
   color: var(--si-gold);
 }
@@ -987,6 +993,12 @@ dl.meta-table dd {
 
 .table-action:hover {
   background: var(--color-surface);
+}
+
+/* A row action whose label is a sentence (/missing): let it wrap inside a
+   phone card instead of running past its edge. */
+.table-action--wrap {
+  white-space: normal;
 }
 
 .table-action svg {

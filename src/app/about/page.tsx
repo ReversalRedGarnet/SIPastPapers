@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { CONTACT_EMAIL } from "@/lib/site";
+import { CONTACT_EMAIL, INDEPENDENCE_NOTE, pastPapersOnlyNote } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "About",
@@ -8,10 +8,15 @@ export const metadata: Metadata = {
   alternates: { canonical: "/about" },
 };
 
+// Rebuilt once a day so the year in pastPapersOnlyNote() rolls over by
+// itself (unchanged content costs no ISR write).
+export const revalidate = 86400;
+
 export default function AboutPage() {
   return (
     <>
       <h1>About this project</h1>
+      <p>{pastPapersOnlyNote()}</p>
 
       <h2>Purpose</h2>
       <p>
@@ -24,10 +29,9 @@ export default function AboutPage() {
 
       <h2>Ownership and independence</h2>
       <p>
-        This project is independent, with no MEHRD affiliation or
-        endorsement unless explicitly granted. Infrastructure (repo, domain,
-        hosting, storage) is intended to stay project-owned, not tied to any
-        one individual&apos;s personal account.
+        {INDEPENDENCE_NOTE} Infrastructure (repo, domain, hosting, storage)
+        is intended to stay project-owned, not tied to any one
+        individual&apos;s personal account.
       </p>
 
       <h2>Open source</h2>
