@@ -15,7 +15,7 @@
 
 import { test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -1245,4 +1245,173 @@ test("the subject-slug rule changed no existing public address: every subject wi
   assert.ok(oldPapers.length > 0, "the test database has public papers to compare");
   assert.deepEqual(unique(current("/exams/", 6)), oldPapers);
   assert.deepEqual(unique(current("/browse/", 5)), oldSubjectPages);
+});
+
+// --- fill-placeholder: attaching a file to a "not yet recovered" placeholder ---
+
+const fillPdf = (tag: string) => Buffer.from(`%PDF-1.4\n%fill-placeholder-${tag}\n`);
+const sha256Of = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+function fillInput(subjectSlug: string, year: number, artifactType: ArtifactType, buffer: Buffer) {
+  return { examSeriesCode: "sisc-l1", year, subjectSlug, artifactType, paperNo: null, file: { buffer, mime: "application/pdf" } };
+}
+
+/** The parts of a row a refused fill must leave exactly as they were. */
+async function rowSnapshot(artifactId: string) {
+  return {
+    artifact: await queryOne("select status, title, published_at from artifacts where id = $1", [artifactId]),
+    files: await query("select storage_key, sha256, bytes from files where artifact_id = $1 order by storage_key", [artifactId]),
+    rights: await query("select rights_status from rights_records where artifact_id = $1 order by rights_status", [artifactId]),
+    sources: await query("select source_id from artifact_sources where artifact_id = $1", [artifactId]),
+  };
+}
+
+test("fill-placeholder: the dry run changes nothing; --confirm stores the file at ingest's key, records it, and leaves rights pending", async () => {
+  await withRolledBackTransaction(async () => {
+    const subject = await insertTestSubject();
+    const placeholderId = await insertPlaceholder(subject.id, 2099, "marking_scheme");
+    const buffer = fillPdf("happy");
+    const input = fillInput(subject.slug, 2099, "marking_scheme", buffer);
+    const storage = getStorageProvider();
+
+    const plan = await queries.planPlaceholderFill(input);
+    assert.deepEqual(plan.refusals, []);
+    assert.equal(plan.stored, "nothing");
+    assert.deepEqual(
+      { status: plan.before.status, files: plan.before.files, rights: plan.before.rightsStatus },
+      { status: "not_yet_recovered", files: [], rights: null }
+    );
+    assert.equal(await storage.exists(plan.storageKey), false, "the dry run stores nothing");
+    assert.equal((await rowSnapshot(placeholderId)).artifact?.status, "not_yet_recovered", "the dry run changes no row");
+
+    // The key follows ingest's convention: the same as a marking scheme ingested for this subject a year earlier.
+    const ingested = await queries.ingestArtifact(fillInput(subject.slug, 2098, "marking_scheme", fillPdf("ingested-2098")));
+    assert.equal(plan.storageKey, ingested.storageKey.replaceAll("2098", "2099"));
+
+    const result = await queries.fillPlaceholder(input);
+    assert.ok(!("refusals" in result), "the fill should go ahead");
+    if ("refusals" in result) return;
+    assert.equal(result.after.artifactId, placeholderId, "the existing row is filled, not a new one added");
+    assert.equal(result.after.title, plan.before.title, "its title is unchanged");
+    assert.equal(result.after.status, "pending_review");
+    assert.deepEqual(result.after.files, [{ storageKey: plan.storageKey, sha256: sha256Of(buffer), bytes: buffer.byteLength }]);
+    assert.equal(result.after.rightsStatus, "pending_institutional_approval", "rights are left pending");
+    assert.deepEqual(await storage.get(plan.storageKey), buffer, "the stored bytes are the file's");
+    const audit = await queryOne<{ n: string }>(
+      "select count(*) as n from audit_events where event_type = 'placeholder_filled' and object_id = $1",
+      [placeholderId]
+    );
+    assert.equal(audit?.n, "1");
+
+    // Rights pending: publish is refused until approve-rights, as after ingest.
+    assert.ok("missing" in (await queries.publishArtifact(placeholderId)), "publish refused while rights are pending");
+    await queries.approveRights(placeholderId, { basis: "teacher-verified", approvedBy: "Test Verifier", evidenceUri: "file://evidence/fill.pdf" });
+    assert.ok(!("missing" in (await queries.publishArtifact(placeholderId))), "publishes once rights are approved");
+    const [file] = await query<{ id: string }>("select id from files where artifact_id = $1", [placeholderId]);
+    assert.ok(await queries.getFileForDownload(file.id), "and its file is then served");
+
+    // A second fill of the same row is refused: it's published (and has a file).
+    const again = await queries.fillPlaceholder(fillInput(subject.slug, 2099, "marking_scheme", fillPdf("again")));
+    assert.ok("refusals" in again && again.refusals.some((r) => r.includes("published")));
+  });
+});
+
+test("fill-placeholder refuses anything but a bare placeholder, never overwrites a stored file, and changes nothing when it refuses", async () => {
+  await withRolledBackTransaction(async () => {
+    const subject = await insertTestSubject();
+    const storage = getStorageProvider();
+
+    async function expectRefused(artifactId: string, input: Parameters<typeof queries.fillPlaceholder>[0], reason: RegExp) {
+      const before = await rowSnapshot(artifactId);
+      const result = await queries.fillPlaceholder(input);
+      assert.ok("refusals" in result, `should refuse (${reason})`);
+      if ("refusals" in result) {
+        assert.ok(result.refusals.some((r) => reason.test(r)), `refusals ${JSON.stringify(result.refusals)} should match ${reason}`);
+      }
+      assert.deepEqual(await rowSnapshot(artifactId), before, "the row is unchanged");
+    }
+
+    // A published paper: refused, and its stored file is untouched.
+    const publishedId = await publishSubjectPaper(subject.slug, 2097, "question_paper");
+    const [publishedFile] = await query<{ storage_key: string; sha256: string }>(
+      "select storage_key, sha256 from files where artifact_id = $1",
+      [publishedId]
+    );
+    await expectRefused(publishedId, fillInput(subject.slug, 2097, "question_paper", fillPdf("over-published")), /published/);
+    assert.equal(sha256Of((await storage.get(publishedFile.storage_key))!), publishedFile.sha256, "the published file's bytes are unchanged");
+
+    // An ingested paper still pending review: not a placeholder.
+    const { artifactId: pendingId } = await queries.ingestArtifact(fillInput(subject.slug, 2096, "question_paper", fillPdf("pending")));
+    await expectRefused(
+      pendingId,
+      fillInput(subject.slug, 2096, "question_paper", fillPdf("over-pending")),
+      /isn't a "not yet recovered" placeholder \(its status is pending_review\)/
+    );
+
+    // A placeholder that already has a file.
+    const { artifactId: withFileId } = await queries.ingestArtifact(fillInput(subject.slug, 2095, "question_paper", fillPdf("has-file")));
+    await query("update artifacts set status = 'not_yet_recovered' where id = $1", [withFileId]);
+    await expectRefused(withFileId, fillInput(subject.slug, 2095, "question_paper", fillPdf("over-file")), /already has a file/);
+
+    // A placeholder with a rights decision already made.
+    const decidedId = await insertPlaceholder(subject.id, 2094, "marking_scheme");
+    await query(
+      `insert into rights_records (id, artifact_id, rights_status, basis, evidence_uri, approved_by, approved_at, expiry_date, notes)
+       values ($1, $2, 'permission_granted', 'teacher-verified', 'file://x', 'Someone', now(), null, null)`,
+      [randomUUID(), decidedId]
+    );
+    await expectRefused(
+      decidedId,
+      fillInput(subject.slug, 2094, "marking_scheme", fillPdf("decided")),
+      /already has a rights decision \(permission_granted\)/
+    );
+
+    // --source on a placeholder that already has a source.
+    const sourcedId = await insertPlaceholder(subject.id, 2093, "marking_scheme");
+    const sourceId = randomUUID();
+    await query(
+      "insert into sources (id, source_type, organization, person_label, url, attribution) values ($1, 'other', 'Somewhere', null, null, null)",
+      [sourceId]
+    );
+    await query("insert into artifact_sources (artifact_id, source_id, is_primary, notes) values ($1, $2, true, null)", [sourcedId, sourceId]);
+    await expectRefused(
+      sourcedId,
+      { ...fillInput(subject.slug, 2093, "marking_scheme", fillPdf("sourced")), sourceOrganization: "MEHRD" },
+      /already has a source/
+    );
+
+    // Different bytes already stored at the key: never overwritten.
+    const occupiedId = await insertPlaceholder(subject.id, 2092, "marking_scheme");
+    const occupiedInput = fillInput(subject.slug, 2092, "marking_scheme", fillPdf("mine"));
+    const { storageKey } = await queries.planPlaceholderFill(occupiedInput);
+    const someoneElses = fillPdf("someone-elses");
+    await storage.put(storageKey, someoneElses, { contentType: "application/pdf" });
+    assert.equal((await queries.planPlaceholderFill(occupiedInput)).stored, "different file");
+    await expectRefused(occupiedId, occupiedInput, /storage already holds a different file/);
+    assert.deepEqual(await storage.get(storageKey), someoneElses, "the stored file is untouched");
+
+    // No row at all: that's a new paper, for ingest.
+    await assert.rejects(
+      queries.planPlaceholderFill(fillInput(subject.slug, 2091, "examiner_report", fillPdf("nothing"))),
+      /No paper is recorded .* use ingest for a new paper/
+    );
+  });
+});
+
+test("fill-placeholder reuses the same bytes left at the key by an earlier attempt that failed before recording them", async () => {
+  await withRolledBackTransaction(async () => {
+    const subject = await insertTestSubject();
+    const placeholderId = await insertPlaceholder(subject.id, 2099, "marking_scheme");
+    const input = fillInput(subject.slug, 2099, "marking_scheme", fillPdf("leftover"));
+    const { storageKey } = await queries.planPlaceholderFill(input);
+    await getStorageProvider().put(storageKey, input.file.buffer, { contentType: "application/pdf" });
+
+    assert.equal((await queries.planPlaceholderFill(input)).stored, "same file");
+    const result = await queries.fillPlaceholder(input);
+    assert.ok(!("refusals" in result), "the fill goes ahead, reusing the stored bytes");
+    if (!("refusals" in result)) {
+      assert.equal(result.after.artifactId, placeholderId);
+      assert.equal(result.after.files.length, 1);
+    }
+  });
 });
