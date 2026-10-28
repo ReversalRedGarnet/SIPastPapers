@@ -20,11 +20,13 @@ export const revalidate = 300;
 /**
  * Builds a mailto link with a prefilled subject line naming the exact
  * paper, so a reply lands in the inbox already labelled with what it's
- * about instead of a bare "I have this" with no context.
+ * about instead of a bare "I have this" with no context. The body asks for
+ * the file itself, since an email without it can't be used.
  */
 function mailtoHref(row: MissingPaperRow): string {
   const subject = `I have: ${row.examSeriesName} ${row.subjectName} ${row.year} (${row.missingTypes.join(" + ")})`;
-  return `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}`;
+  const body = "Please attach the paper file to this email. Emails without an attachment can't be added.";
+  return `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
 // A small inline icon rather than a library import -- this is the only
@@ -108,14 +110,14 @@ export default async function MissingPapersPage() {
                       </td>
                       <td>
                         <a
-                          className="table-action"
+                          className="table-action table-action--wrap"
                           href={mailtoHref(row)}
                         >
                           <MailIcon />
                           {/* The accessible name starts with the visible words, so
-                              "click Send it" works with voice control. */}
-                          Send it
-                          <span className="visually-hidden">{`: ${row.subjectName} ${row.year} (${seriesDisplayLabel(row.examSeriesCode)})`}</span>
+                              voice control can say them. */}
+                          Do you have this paper? Email it to us as an attachment.
+                          <span className="visually-hidden">{` (${row.subjectName} ${row.year}, ${seriesDisplayLabel(row.examSeriesCode)})`}</span>
                         </a>
                       </td>
                     </tr>

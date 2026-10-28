@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Analytics } from "@vercel/analytics/next";
 import { SiteNav } from "@/components/SiteNav";
-import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { INDEPENDENCE_NOTE, SITE_NAME, SITE_URL } from "@/lib/site";
 // Importing a .css file directly, like this, is a Next.js-specific
 // convention (handled by its build tooling, not a normal JavaScript
 // feature) -- it means "make sure these styles are loaded wherever this
@@ -84,6 +84,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <Link href="/about">About</Link>
               <Link href="/about#corrections">Report an issue</Link>
             </nav>
+            <p className="site-footer__note">{INDEPENDENCE_NOTE}</p>
           </div>
         </footer>
         <Analytics />

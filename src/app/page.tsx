@@ -8,6 +8,7 @@ import { artifactTypeLabel, paperVariantLabel } from "@/lib/artifact-naming";
 import { seriesDisplayLabel } from "@/lib/format";
 import { paperPath } from "@/lib/page-links";
 import { deriveMissingPaperRows } from "@/lib/missing-papers";
+import { pastPapersOnlyNote } from "@/lib/site";
 
 // The list of papers only changes when the operator publishes or
 // unpublishes something using the command-line tool — it doesn't change
@@ -77,6 +78,7 @@ export default async function HomePage() {
         papers are being added as they&apos;re gathered and verified. Also
         known as SI Past Papers or SI Past Exams.
       </p>
+      <p style={{ marginTop: "0.5rem" }}>{pastPapersOnlyNote()}</p>
       <p className="hint" style={{ marginTop: "0.5rem" }}>
         Spotted a paper that&apos;s missing, wrong, or looks altered?{" "}
         <Link href="/about#corrections">Report an issue</Link>.

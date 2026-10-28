@@ -18,3 +18,16 @@ export const SITE_NAME = "SI National Exam Archive";
  * stays in sync if this ever changes.
  */
 export const CONTACT_EMAIL = "dorihaop@gmail.com";
+
+/** Who runs the site, and who doesn't (the footer and the About page). */
+export const INDEPENDENCE_NOTE =
+  "sipastexams.com is an independent, student-run archive. It is not run by or affiliated with the Solomon Islands Government, the Ministry of Education, or any exam authority.";
+
+/**
+ * What the site doesn't have (the homepage and the About page). The year is
+ * this year in Honiara, so the line never goes stale.
+ */
+export function pastPapersOnlyNote(now: Date = new Date()): string {
+  const year = new Intl.DateTimeFormat("en", { timeZone: "Pacific/Guadalcanal", year: "numeric" }).format(now);
+  return `Past papers only. We do not have current-year (${year}) papers, official booklets, or exam answers for upcoming exams.`;
+}
