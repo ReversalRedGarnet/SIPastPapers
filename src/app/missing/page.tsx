@@ -3,7 +3,7 @@ import { getCoverageMatrix } from "@/lib/db/queries";
 import { deriveMissingPaperRows, type MissingPaperRow } from "@/lib/missing-papers";
 import { seriesDisplayLabel } from "@/lib/format";
 import { artifactTypeLabel } from "@/lib/artifact-naming";
-import { CONTACT_EMAIL } from "@/lib/site";
+import { ATTACHMENT_REQUEST, CONTACT_EMAIL } from "@/lib/site";
 import { Badge } from "@/components/Badge";
 
 export const metadata: Metadata = {
@@ -25,8 +25,7 @@ export const revalidate = 300;
  */
 function mailtoHref(row: MissingPaperRow): string {
   const subject = `I have: ${row.examSeriesName} ${row.subjectName} ${row.year} (${row.missingTypes.join(" + ")})`;
-  const body = "Please attach the paper file to this email. Emails without an attachment can't be added.";
-  return `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  return `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(ATTACHMENT_REQUEST)}`;
 }
 
 // A small inline icon rather than a library import -- this is the only

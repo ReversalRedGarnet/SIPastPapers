@@ -19,6 +19,9 @@ export const SITE_NAME = "SI National Exam Archive";
  */
 export const CONTACT_EMAIL = "dorihaop@gmail.com";
 
+/** The body of every "send us this paper" email (/missing and a placeholder's own page). */
+export const ATTACHMENT_REQUEST = "Please attach the paper file to this email. Emails without an attachment can't be added.";
+
 /** Who runs the site, and who doesn't (the footer and the About page). */
 export const INDEPENDENCE_NOTE =
   "sipastexams.com is an independent, student-run archive. It is not run by or affiliated with the Solomon Islands Government, the Ministry of Education, or any exam authority.";
