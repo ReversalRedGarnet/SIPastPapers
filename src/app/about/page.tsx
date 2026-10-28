@@ -14,9 +14,11 @@ export const revalidate = 86400;
 
 export default function AboutPage() {
   return (
-    <>
+    <div className="measure">
       <h1>About this project</h1>
-      <p>{pastPapersOnlyNote()}</p>
+      <div className="callout">
+        <p>{pastPapersOnlyNote()}</p>
+      </div>
 
       <h2>Purpose</h2>
       <p>
@@ -77,6 +79,6 @@ export default function AboutPage() {
         corrections, contact{" "}
         <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
       </p>
-    </>
+    </div>
   );
 }

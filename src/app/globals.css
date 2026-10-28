@@ -223,9 +223,13 @@ main {
   color: var(--chrome-fg);
 }
 
-/* The independence line: a full-width line of its own under the links. */
+/* The independence line: a full-width line of its own under the links.
+   The text is capped to a readable length with end padding, not
+   max-width: a narrower box would no longer force its own line. */
 .site-footer__note {
   flex: 1 0 100%;
+  padding-inline-end: max(0px, 100% - 56ch);
+  text-wrap: pretty;
   margin: 0;
 }
 
@@ -266,6 +270,12 @@ h6 {
   font-weight: 400;
   color: var(--color-muted);
   font-size: 0.8125rem;
+}
+
+/* A readable line length (about 65-75 characters) for running text, so
+   paragraphs don't stretch across a wide desktop screen. */
+.measure {
+  max-width: 68ch;
 }
 
 /* Cards ------------------------------------------------------------------ */
@@ -970,6 +980,33 @@ dl.meta-table dd {
 
 .callout p {
   margin: 0;
+}
+
+.callout p + p {
+  margin-top: 0.5rem;
+}
+
+/* The homepage intro (see page.tsx). Two text sizes only: the .lede size
+   for the paragraphs and the notice, the .hint size for the small lines,
+   so the tinted notice panel is the one thing that stands out. */
+.home-intro > * {
+  margin: 0;
+}
+
+.home-intro > * + * {
+  margin-top: 0.75rem;
+}
+
+.home-intro .callout {
+  font-size: 0.9375rem;
+}
+
+/* "Report an issue" and "N papers still missing" side by side, wrapping
+   onto separate lines when there isn't room. */
+.home-intro__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
 }
 
 /* A compact per-row action (e.g. the /missing table's "Send it" link) --
