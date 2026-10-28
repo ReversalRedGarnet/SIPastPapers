@@ -8,7 +8,7 @@ import { artifactTypeLabel, paperVariantLabel } from "@/lib/artifact-naming";
 import { seriesDisplayLabel } from "@/lib/format";
 import { paperPath } from "@/lib/page-links";
 import { deriveMissingPaperRows } from "@/lib/missing-papers";
-import { pastPapersOnlyNote } from "@/lib/site";
+import { INDEPENDENCE_NOTE, pastPapersOnlyNote } from "@/lib/site";
 
 // The list of papers only changes when the operator publishes or
 // unpublishes something using the command-line tool — it doesn't change
@@ -68,27 +68,40 @@ export default async function HomePage() {
     <>
       <h1 className="visually-hidden">SI National Exam Archive</h1>
 
-      <p className="lede">
-        The SI National Exam Archive is a free, publicly searchable
-        collection of past Solomon Islands national examination papers. It
-        was built to help students revise using papers similar to the ones
-        they&apos;ll actually sit. Browse by exam level, year, and subject,
-        or search directly for a specific paper below. The archive is
-        actively growing, not every past exam is available yet, but more
-        papers are being added as they&apos;re gathered and verified. Also
-        known as SI Past Papers or SI Past Exams.
-      </p>
-      <p style={{ marginTop: "0.5rem" }}>{pastPapersOnlyNote()}</p>
-      <p className="hint" style={{ marginTop: "0.5rem" }}>
-        Spotted a paper that&apos;s missing, wrong, or looks altered?{" "}
-        <Link href="/about#corrections">Report an issue</Link>.
-      </p>
-      {missingCount > 0 && (
-        <p className="hint" style={{ marginTop: "0.25rem" }}>
-          {missingCount} paper{missingCount === 1 ? "" : "s"} still missing —{" "}
-          <Link href="/missing">help us find them</Link>.
+      {/* The intro: what the archive is, the two things every visitor
+          should know (in a tinted panel), how to use it, then the small
+          links and the also-known-as line (kept on the page for search). */}
+      <div className="home-intro measure">
+        <p className="lede">
+          The SI National Exam Archive is a free, publicly searchable
+          collection of past Solomon Islands national examination papers.
+          It was built to help students revise using papers similar to the
+          ones they&apos;ll actually sit.
         </p>
-      )}
+        <div className="callout">
+          <p>{pastPapersOnlyNote()}</p>
+          <p>{INDEPENDENCE_NOTE}</p>
+        </div>
+        <p className="lede">
+          Browse by exam level, year, and subject, or search directly for a
+          specific paper below. The archive is actively growing, not every
+          past exam is available yet, but more papers are being added as
+          they&apos;re gathered and verified.
+        </p>
+        <p className="hint home-intro__links">
+          <span>
+            Spotted a paper that&apos;s missing, wrong, or looks altered?{" "}
+            <Link href="/about#corrections">Report an issue</Link>.
+          </span>
+          {missingCount > 0 && (
+            <span>
+              {missingCount} paper{missingCount === 1 ? "" : "s"} still missing —{" "}
+              <Link href="/missing">help us find them</Link>.
+            </span>
+          )}
+        </p>
+        <p className="hint">Also known as SI Past Papers or SI Past Exams.</p>
+      </div>
 
       <div className="card-grid" style={{ marginTop: "1.5rem" }}>
         <div className="card">
