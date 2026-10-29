@@ -268,115 +268,118 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
         </nav>
       )}
 
-      {otherYears.length > 0 && (
-        <div style={{ marginTop: "2rem" }}>
-          <h2>More papers in this subject</h2>
-          <ul className="list-rows">
-            {otherYears.map((y) => (
-              <li key={y}>
-                <Link prefetch={false} href={browseSubjectPath(record.examSeriesCode, y, record.subjectSlug)} className="list-row">
-                  <span className="list-row__label">
-                    {record.subject} {y}
-                  </span>
-                  <span className="list-row__chevron" aria-hidden="true">
-                    ›
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {related.length > 0 && (
-        <div style={{ marginTop: "2rem" }}>
-          <h2>Related papers</h2>
-          <ul className="list-rows">
-            {related.map((r) => (
-              <li key={r.id}>
-                <Link
-                  prefetch={false}
-                  href={paperPath(r)}
-                  className="list-row"
-                >
-                  <span className="list-row__label">
-                    {r.subject} {r.year} — {artifactListLabel(r.artifactType, r.paperNumber)}
-                  </span>
-                  <span className="list-row__chevron" aria-hidden="true">
-                    ›
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div id="report-a-problem" style={{ marginTop: "2rem", scrollMarginTop: "1.5rem" }} className="card">
-        <h2>Report a problem</h2>
-        <p className="lede">
-          Spotted a wrong year, missing pages, or a rights concern with this
-          record? Tell us below, or read the full{" "}
-          <Link href="/about#corrections">correction and takedown process</Link>.
-        </p>
-
-        {/* <Suspense> marks the one part of this page that can only be
-            filled in once the browser has the full address (ReportStatus
-            reads its "?report=" code). Everything else on the page is
-            built and cached ahead of time; this part shows nothing
-            (`fallback={null}`) until then. */}
-        <Suspense fallback={null}>
-          <ReportStatus />
-        </Suspense>
-
-        <form aria-label="Report a problem with this record">
-          <input type="hidden" name="artifactId" value={record.id} />
-          <input type="hidden" name="returnTo" value={currentPath} />
-
-          <div className="field">
-            <label htmlFor="issueType">What&apos;s wrong?</label>
-            <select id="issueType" name="issueType" required defaultValue="">
-              <option value="" disabled>
-                Select an issue type
-              </option>
-              {ISSUE_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
+      {/* Side by side as the width allows (see .paper-extras in globals.css). */}
+      <div className="paper-extras">
+        {otherYears.length > 0 && (
+          <div>
+            <h2>More papers in this subject</h2>
+            <ul className="list-rows list-rows--tiles">
+              {otherYears.map((y) => (
+                <li key={y}>
+                  <Link prefetch={false} href={browseSubjectPath(record.examSeriesCode, y, record.subjectSlug)} className="list-row">
+                    <span className="list-row__label">
+                      {record.subject} {y}
+                    </span>
+                    <span className="list-row__chevron" aria-hidden="true">
+                      ›
+                    </span>
+                  </Link>
+                </li>
               ))}
-            </select>
+            </ul>
           </div>
+        )}
 
-          <div className="field">
-            <label htmlFor="description">Details</label>
-            <textarea id="description" name="description" required maxLength={DESCRIPTION_MAX_LENGTH} />
+        {related.length > 0 && (
+          <div>
+            <h2>Related papers</h2>
+            <ul className="list-rows list-rows--tiles">
+              {related.map((r) => (
+                <li key={r.id}>
+                  <Link
+                    prefetch={false}
+                    href={paperPath(r)}
+                    className="list-row"
+                  >
+                    <span className="list-row__label">
+                      {r.subject} {r.year} — {artifactListLabel(r.artifactType, r.paperNumber)}
+                    </span>
+                    <span className="list-row__chevron" aria-hidden="true">
+                      ›
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </div>
+        )}
 
-          <div className="field">
-            <label htmlFor="contact">
-              Your email <span className="hint">(optional, only if you&apos;re happy to be contacted)</span>
-            </label>
-            <input type="email" id="contact" name="contact" maxLength={CONTACT_MAX_LENGTH} />
-          </div>
+        <div id="report-a-problem" style={{ scrollMarginTop: "1.5rem" }} className="card">
+          <h2>Report a problem</h2>
+          <p className="lede">
+            Spotted a wrong year, missing pages, or a rights concern with this
+            record? Tell us below, or read the full{" "}
+            <Link href="/about#corrections">correction and takedown process</Link>.
+          </p>
 
-          {/* Spam trap (see HONEYPOT_FIELD in src/lib/report-form.ts):
-              hidden from sight, from screen readers and from keyboard
-              focus, so only bots that fill in every field will fill it. */}
-          <div className="visually-hidden" aria-hidden="true">
-            <label htmlFor={HONEYPOT_FIELD}>Leave this empty</label>
-            <input type="text" id={HONEYPOT_FIELD} name={HONEYPOT_FIELD} tabIndex={-1} autoComplete="off" />
-          </div>
+          {/* <Suspense> marks the one part of this page that can only be
+              filled in once the browser has the full address (ReportStatus
+              reads its "?report=" code). Everything else on the page is
+              built and cached ahead of time; this part shows nothing
+              (`fallback={null}`) until then. */}
+          <Suspense fallback={null}>
+            <ReportStatus />
+          </Suspense>
 
-          <div className="form-actions">
-            {/* Handing a Server Action (see ./actions.ts) straight to a button's
-                `formAction` is what wires this plain HTML form up to run
-                server-side code on submit -- no separate click handler or
-                fetch() call needed. */}
-            <button type="submit" formAction={reportIssueAction}>
-              Submit report
-            </button>
-          </div>
-        </form>
+          <form aria-label="Report a problem with this record">
+            <input type="hidden" name="artifactId" value={record.id} />
+            <input type="hidden" name="returnTo" value={currentPath} />
+
+            <div className="field">
+              <label htmlFor="issueType">What&apos;s wrong?</label>
+              <select id="issueType" name="issueType" required defaultValue="">
+                <option value="" disabled>
+                  Select an issue type
+                </option>
+                {ISSUE_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field">
+              <label htmlFor="description">Details</label>
+              <textarea id="description" name="description" required maxLength={DESCRIPTION_MAX_LENGTH} />
+            </div>
+
+            <div className="field">
+              <label htmlFor="contact">
+                Your email <span className="hint">(optional, only if you&apos;re happy to be contacted)</span>
+              </label>
+              <input type="email" id="contact" name="contact" maxLength={CONTACT_MAX_LENGTH} />
+            </div>
+
+            {/* Spam trap (see HONEYPOT_FIELD in src/lib/report-form.ts):
+                hidden from sight, from screen readers and from keyboard
+                focus, so only bots that fill in every field will fill it. */}
+            <div className="visually-hidden" aria-hidden="true">
+              <label htmlFor={HONEYPOT_FIELD}>Leave this empty</label>
+              <input type="text" id={HONEYPOT_FIELD} name={HONEYPOT_FIELD} tabIndex={-1} autoComplete="off" />
+            </div>
+
+            <div className="form-actions">
+              {/* Handing a Server Action (see ./actions.ts) straight to a button's
+                  `formAction` is what wires this plain HTML form up to run
+                  server-side code on submit -- no separate click handler or
+                  fetch() call needed. */}
+              <button type="submit" formAction={reportIssueAction}>
+                Submit report
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </>
   );

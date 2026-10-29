@@ -107,7 +107,7 @@ export default async function SeriesPage({ params }: SeriesPageProps) {
           </p>
         )}
 
-        <ul className="list-rows">
+        <ul className="list-rows list-rows--tiles">
           {years.map((y) => (
             <li key={y}>
               <Link href={`/browse/${seriesCode}/${y}`} className="list-row" prefetch={false}>

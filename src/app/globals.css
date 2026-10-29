@@ -28,7 +28,13 @@
   --chrome-fg: #f3f6fa;
   --font-sans: "Public Sans", system-ui, -apple-system, Roboto, Helvetica,
     Arial, sans-serif;
-  --max-width: 72rem;
+  /* The page container (see "Page container" below): it fills the screen
+     less a gutter on each side, up to about 1600px, then stays centred.
+     The gutter is exactly 16px on phones (under 640px) and grows with
+     the screen to 48px; the column gap grows the same way. */
+  --max-width: 100rem;
+  --gutter: clamp(1rem, 5vw - 1rem, 3rem);
+  --column-gap: clamp(1rem, 0.5rem + 1.5vw, 2rem);
   --radius-sm: 6px;
   --radius-md: 8px;
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05);
@@ -130,10 +136,21 @@ a {
   outline-color: var(--si-gold);
 }
 
+/* Page container ------------------------------------------------------ */
+
+/* The header, the page and the footer share one fluid container, so their
+   left and right edges line up at every width. Extra width on a large
+   screen goes to columns (grids below), never to longer lines of text:
+   see the paragraph limit under Typography. */
+.site-header__inner,
+main,
+.site-footer__inner {
+  width: min(100% - 2 * var(--gutter), var(--max-width));
+  margin-inline: auto;
+}
+
 .site-header__inner {
-  max-width: var(--max-width);
-  margin: 0 auto;
-  padding: 0.85rem 1.5rem;
+  padding: 0.85rem 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -142,6 +159,9 @@ a {
 }
 
 .site-title {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
   font-weight: 600;
   font-size: 1.05rem;
   text-decoration: none;
@@ -184,10 +204,10 @@ a {
 
 main {
   flex: 1 0 auto;
-  width: 100%;
-  max-width: var(--max-width);
-  margin: 0 auto;
-  padding: 1.75rem 1.5rem 3rem;
+  padding: 1.75rem 0 3rem;
+  /* Lets lists inside the page change layout by the room they actually
+     have (see .list-rows--tiles), not by the screen width. */
+  container-type: inline-size;
 }
 
 .site-footer {
@@ -203,9 +223,7 @@ main {
 }
 
 .site-footer__inner {
-  max-width: var(--max-width);
-  margin: 0 auto;
-  padding: 1.25rem 1.5rem;
+  padding: 1.25rem 0;
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem 1.5rem;
@@ -216,11 +234,18 @@ main {
 .site-footer nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
+  gap: 0 1rem;
 }
 
 .site-footer a {
   color: var(--chrome-fg);
+}
+
+/* Each footer link is a full 44px tap target. */
+.site-footer nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
 }
 
 /* The independence line: a full-width line of its own under the links.
@@ -272,10 +297,30 @@ h6 {
   font-size: 0.8125rem;
 }
 
-/* A readable line length (about 65-75 characters) for running text, so
-   paragraphs don't stretch across a wide desktop screen. */
-.measure {
-  max-width: 68ch;
+/* A readable line length (about 65-80 characters) for every paragraph on
+   a page, whatever column it sits in, so text never stretches across a
+   wide screen. (ch is relative to the text's own size.) A dashed
+   "nothing here" box keeps its full width: its text is centred in it. */
+main p {
+  max-width: 72ch;
+}
+
+main .empty-state,
+main .empty-state p {
+  max-width: none;
+}
+
+/* Running text in columns (About): one column on phones and tablets,
+   two on a laptop, three on a large screen. */
+.prose-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr));
+  gap: 0 var(--column-gap);
+  align-items: start;
+}
+
+.prose-columns > section {
+  max-width: 72ch;
 }
 
 /* Cards ------------------------------------------------------------------ */
@@ -285,25 +330,25 @@ h6 {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
-  padding: 1.5rem;
+  padding: clamp(1rem, 3vw, 1.5rem);
 }
 
 .card h2 {
   margin-top: 0;
 }
 
+/* The homepage's Search and Browse cards: stacked, then side by side from
+   about 900px. Grid's default (stretch) makes both cards the row's
+   height; each card's content still sits at the top. */
 .card-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.25rem;
-  /* Grid's default (stretch) — cards match the row's height automatically;
-     each card's own content still sits at its natural top-aligned height. */
-  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--column-gap);
 }
 
-@media (max-width: 48rem) {
+@media (min-width: 56.25rem) {
   .card-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -317,6 +362,13 @@ h6 {
 
 .section-header h2 {
   margin: 0;
+}
+
+/* "View all": a full 44px tap target. */
+.section-header a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
 }
 
 /* Forms ------------------------------------------------------------------ */
@@ -485,6 +537,28 @@ button.button--gradient,
   max-width: none;
 }
 
+/* With room for it (a wide page), the search box and the three filters
+   sit on one line instead of two. */
+@container (min-width: 64rem) {
+  .search-form--inline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .search-form--inline .field {
+    margin-bottom: 0;
+  }
+
+  .search-form--inline .search-form__row {
+    flex: 2 1 26rem;
+  }
+
+  .search-form--inline .search-form__filters {
+    flex: 3 1 30rem;
+  }
+}
+
 /* Chevron list rows: exam levels, subjects (with counts), paper types --- */
 
 .list-rows {
@@ -538,12 +612,35 @@ button.button--gradient,
   background: none;
 }
 
+/* A list that can use extra width (Browse, a paper's "More papers"):
+   one joined list where it's narrow; where its column has room, a grid
+   of separate rows, as many across as fit, so a wide screen shows more
+   of the list at once instead of very long rows. */
+@container (min-width: 36rem) {
+  .list-rows--tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+    gap: 0.5rem;
+    border: none;
+    border-radius: 0;
+    overflow: visible;
+    background: none;
+  }
+
+  .list-rows--tiles > li {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--color-bg);
+  }
+}
+
 /* Browse: sidebar + content two-pane layout ------------------------------- */
 
 .browse-layout {
   display: flex;
   align-items: flex-start;
-  gap: 2rem;
+  gap: var(--column-gap);
 }
 
 .browse-sidebar {
@@ -606,9 +703,11 @@ button.button--gradient,
 .browse-content {
   flex: 1 1 auto;
   min-width: 0;
+  container-type: inline-size;
 }
 
-@media (max-width: 40rem) {
+/* Phones: the menu above the list, with full 44px tap targets. */
+@media (max-width: 39.99rem) {
   .browse-layout {
     flex-direction: column;
   }
@@ -616,6 +715,14 @@ button.button--gradient,
   .browse-sidebar {
     flex: 1 1 auto;
     width: 100%;
+  }
+
+  .browse-content {
+    width: 100%;
+  }
+
+  .browse-sidebar a {
+    min-height: 2.75rem;
   }
 }
 
@@ -670,6 +777,30 @@ th {
   overflow-x: auto;
 }
 
+/* Tablets: slightly denser rows, so more of a table fits on screen. */
+@media (min-width: 40rem) and (max-width: 63.99rem) {
+  th,
+  td {
+    padding: 0.5rem 0.6rem;
+  }
+}
+
+/* /missing: its three tables (one per exam level) share fixed column
+   widths, so the years, subjects, badges and email links line up from
+   one table to the next whatever their contents. The action column fits
+   "Email it to us" at the touch-screen size. */
+.missing-table {
+  table-layout: fixed;
+}
+
+.missing-table__year {
+  width: 5.5rem;
+}
+
+.missing-table__action {
+  width: 12.5rem;
+}
+
 /* Below the tablet/mobile breakpoint (matches .browse-layout's stacking
    point), the paper-list tables (/results, homepage "Recently added")
    switch from a table to a stack of cards -- a horizontally-scrolling or
@@ -678,7 +809,7 @@ th {
    readers; only the layout changes, via display overrides on the existing
    elements plus a CSS-generated label (from data-label) in place of the
    now-hidden header row. */
-@media (max-width: 40rem) {
+@media (max-width: 39.99rem) {
   .data-table {
     border: none;
   }
@@ -746,6 +877,14 @@ th {
     margin-top: 0.35rem;
     padding-top: 0.6rem;
     border-top: 1px solid var(--color-border);
+  }
+
+  /* A card's actions are full 44px tap targets on any phone, touch
+     screen detected or not. */
+  .data-table .table-action {
+    min-height: 2.75rem;
+    padding: 0.5rem 0.85rem;
+    font-size: 0.9375rem;
   }
 }
 
@@ -827,12 +966,29 @@ th {
   color: var(--color-accent);
 }
 
+/* Phones: each breadcrumb link is a full 44px tap target. */
+@media (max-width: 39.99rem) {
+  .breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 0.35rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .breadcrumb a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
+}
+
 /* Document / paper page -------------------------------------------------- */
 
 .doc-layout {
   display: grid;
-  grid-template-columns: minmax(0, 22rem) 1fr;
-  gap: 1.5rem;
+  grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
+  gap: var(--column-gap);
   align-items: start;
 }
 
@@ -895,10 +1051,31 @@ th {
     flex-direction: column;
   }
 
+  /* Stretch, not flex-start: the label must take the link's width to be
+     cut short with "…", or a long one pushes the page sideways. */
   .paper-pager__link--next {
     text-align: left;
-    align-items: flex-start;
+    align-items: stretch;
   }
+}
+
+/* Below the paper: "More papers", "Related papers" and the report form,
+   side by side as the width allows (one column on phones, up to three
+   on a large screen). */
+.paper-extras {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  gap: 2rem var(--column-gap);
+  align-items: start;
+  margin-top: 2rem;
+}
+
+.paper-extras > * {
+  container-type: inline-size;
+}
+
+.paper-extras h2 {
+  margin-top: 0;
 }
 
 .doc-actions {
@@ -935,6 +1112,8 @@ details.tech-details {
 details.tech-details summary {
   cursor: pointer;
   color: var(--color-muted);
+  min-height: 2.75rem;
+  padding-block: 0.6rem;
 }
 
 dl.meta-table {
@@ -989,12 +1168,34 @@ dl.meta-table dd {
 /* The homepage intro (see page.tsx). Two text sizes only: the .lede size
    for the paragraphs and the notice, the .hint size for the small lines,
    so the tinted notice panel is the one thing that stands out. */
+.home-intro {
+  display: grid;
+  gap: 0.75rem var(--column-gap);
+}
+
 .home-intro > * {
   margin: 0;
 }
 
-.home-intro > * + * {
-  margin-top: 0.75rem;
+/* From laptop width: the text on the left, the notice panel on the right,
+   in the same two columns as the Search and Browse cards below, so all
+   four share left and right edges. The panel spans every text row; the
+   last row (1fr) takes up any extra height if the panel is the taller. */
+@media (min-width: 64rem) {
+  .home-intro {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(4, auto) 1fr;
+  }
+
+  .home-intro > * {
+    grid-column: 1;
+  }
+
+  .home-intro > .callout {
+    grid-column: 2;
+    grid-row: 1 / -1;
+    align-self: start;
+  }
 }
 
 .home-intro .callout {
@@ -1009,7 +1210,20 @@ dl.meta-table dd {
   gap: 0.25rem 1.5rem;
 }
 
-/* A compact per-row action (e.g. the /missing table's "Send it" link) --
+/* Phones: the two links are full 44px tap targets (the padding makes
+   each line taller rather than overlapping the next). */
+@media (max-width: 39.99rem) {
+  .home-intro__links {
+    row-gap: 0;
+  }
+
+  .home-intro__links a {
+    display: inline-block;
+    padding-block: 0.75rem;
+  }
+}
+
+/* A compact per-row action (e.g. the /missing table's "Email it to us" link) --
    deliberately smaller than .button, since a full-size button repeated on
    40+ table rows would be far more visually heavy than the same action
    needs to be. */
@@ -1030,12 +1244,6 @@ dl.meta-table dd {
 
 .table-action:hover {
   background: var(--color-surface);
-}
-
-/* A row action whose label is a sentence (/missing): let it wrap inside a
-   phone card instead of running past its edge. */
-.table-action--wrap {
-  white-space: normal;
 }
 
 .table-action svg {
@@ -1083,7 +1291,7 @@ dl.meta-table dd {
    a slow connection) — stack what would otherwise get cramped. */
 @media (max-width: 30rem) {
   main {
-    padding: 1.25rem 1rem 2.5rem;
+    padding: 1.25rem 0 2.5rem;
   }
 
   h1 {

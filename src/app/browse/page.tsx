@@ -31,7 +31,7 @@ export default async function BrowsePage() {
       {examSeries.length === 0 ? (
         <p className="empty-state">No exam levels have been set up yet.</p>
       ) : (
-        <ul className="list-rows">
+        <ul className="list-rows list-rows--tiles">
           {examSeries.map((s) => (
             <li key={s.code}>
               <Link prefetch={false} href={`/browse/${s.code}`} className="list-row">
