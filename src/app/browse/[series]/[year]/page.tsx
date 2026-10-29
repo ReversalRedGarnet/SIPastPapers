@@ -116,7 +116,7 @@ export default async function YearPage({ params }: YearPageProps) {
         {subjects.length === 0 ? (
           <p className="empty-state">No papers have been published for this year yet.</p>
         ) : (
-          <ul className="list-rows">
+          <ul className="list-rows list-rows--tiles">
             {subjects.map((subject) => (
               <li key={subject.slug}>
                 <Link href={browseSubjectPath(seriesCode, year, subject.slug)} className="list-row" prefetch={false}>

@@ -63,10 +63,14 @@ export default async function MissingPapersPage() {
     <>
       <h1>Missing papers</h1>
 
+      {/* The one place the page asks for the file itself; each row's
+          email link repeats it in the email body. */}
       <div className="callout">
         <p>
           <strong>We do not have these papers yet.</strong> If you have a
-          copy of one, please send it to us.
+          copy of one, email it to us using the link on its row, with the
+          paper attached as a file. Emails without an attachment can&apos;t
+          be added.
         </p>
       </div>
 
@@ -77,10 +81,18 @@ export default async function MissingPapersPage() {
           <div key={group.examSeriesCode} style={{ marginTop: "2rem" }}>
             <h2>{seriesDisplayLabel(group.examSeriesCode)}</h2>
             <div className="data-table table-scroll">
-              <table>
+              <table className="missing-table">
                 <caption className="visually-hidden">
                   Missing papers for {seriesDisplayLabel(group.examSeriesCode)}
                 </caption>
+                {/* Fixed widths shared by all three tables, so the columns
+                    line up from one exam level to the next. */}
+                <colgroup>
+                  <col className="missing-table__year" />
+                  <col />
+                  <col />
+                  <col className="missing-table__action" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th scope="col">Year</th>
@@ -108,14 +120,11 @@ export default async function MissingPapersPage() {
                         </span>
                       </td>
                       <td>
-                        <a
-                          className="table-action table-action--wrap"
-                          href={mailtoHref(row)}
-                        >
+                        <a className="table-action" href={mailtoHref(row)}>
                           <MailIcon />
                           {/* The accessible name starts with the visible words, so
                               voice control can say them. */}
-                          Do you have this paper? Email it to us as an attachment.
+                          Email it to us
                           <span className="visually-hidden">{` (${row.subjectName} ${row.year}, ${seriesDisplayLabel(row.examSeriesCode)})`}</span>
                         </a>
                       </td>

@@ -102,7 +102,7 @@ export default async function SubjectPage({ params }: SubjectPageProps) {
         {papers.length === 0 ? (
           <p className="empty-state">No papers have been published for this subject yet.</p>
         ) : (
-          <ul className="list-rows">
+          <ul className="list-rows list-rows--tiles">
             {papers.map((paper) => {
               const href = paperPath(paper);
               const label = artifactListLabel(paper.artifactType, paper.paperNumber);

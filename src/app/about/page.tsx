@@ -14,71 +14,85 @@ export const revalidate = 86400;
 
 export default function AboutPage() {
   return (
-    <div className="measure">
+    <>
       <h1>About this project</h1>
       <div className="callout">
         <p>{pastPapersOnlyNote()}</p>
       </div>
 
-      <h2>Purpose</h2>
-      <p>
-        The SI National Exam Archive is a free, open-source archive of
-        Solomon Islands national exam papers, preserving material otherwise
-        scattered across Ministry pages, schools, teachers, and
-        document-sharing sites. It does not create new exam content or
-        provide access to unreleased exams.
-      </p>
+      {/* The sections side by side as the width allows (see .prose-columns
+          in globals.css): never one very wide column of text. */}
+      <div className="prose-columns">
+        <section>
+          <h2>Purpose</h2>
+          <p>
+            The SI National Exam Archive is a free, open-source archive of
+            Solomon Islands national exam papers, preserving material otherwise
+            scattered across Ministry pages, schools, teachers, and
+            document-sharing sites. It does not create new exam content or
+            provide access to unreleased exams.
+          </p>
+        </section>
 
-      <h2>Ownership and independence</h2>
-      <p>
-        {INDEPENDENCE_NOTE} Infrastructure (repo, domain, hosting, storage)
-        is intended to stay project-owned, not tied to any one
-        individual&apos;s personal account.
-      </p>
+        <section>
+          <h2>Ownership and independence</h2>
+          <p>
+            {INDEPENDENCE_NOTE} Infrastructure (repo, domain, hosting, storage)
+            is intended to stay project-owned, not tied to any one
+            individual&apos;s personal account.
+          </p>
+        </section>
 
-      <h2>Open source</h2>
-      <p>
-        Code is released under the MIT license (see the{" "}
-        <a
-          href="https://github.com/ReversalRedGarnet/SIPastPapers/blob/main/LICENSE"
-          target="_blank"
-          rel="noreferrer"
-        >
-          LICENSE
-        </a>{" "}
-        file), covering the codebase only — not rights to archived exam
-        content, which is tracked separately.
-      </p>
+        <section>
+          <h2>Open source</h2>
+          <p>
+            Code is released under the MIT license (see the{" "}
+            <a
+              href="https://github.com/ReversalRedGarnet/SIPastPapers/blob/main/LICENSE"
+              target="_blank"
+              rel="noreferrer"
+            >
+              LICENSE
+            </a>{" "}
+            file), covering the codebase only — not rights to archived exam
+            content, which is tracked separately.
+          </p>
+        </section>
 
-      <h2 id="corrections">Correction and takedown process</h2>
-      <ol>
-        <li>A report is received and the affected record is identified.</li>
-        <li>
-          If the report plausibly concerns ownership, privacy, security or
-          authenticity, the record is placed on rights hold pending review.
-        </li>
-        <li>
-          Provenance and rights evidence are reviewed, and the relevant
-          rights holder is contacted where needed.
-        </li>
-        <li>
-          The record is resolved: retained, corrected, replaced, restricted,
-          or withdrawn.
-        </li>
-        <li>The final decision, evidence and date are logged.</li>
-      </ol>
-      <p>
-        The &quot;report a problem&quot; link on every paper page feeds
-        directly into this process. Formal contact channels for
-        institutions and contributors are not set up yet.
-      </p>
+        <section>
+          <h2 id="corrections">Correction and takedown process</h2>
+          <ol>
+            <li>A report is received and the affected record is identified.</li>
+            <li>
+              If the report plausibly concerns ownership, privacy, security or
+              authenticity, the record is placed on rights hold pending review.
+            </li>
+            <li>
+              Provenance and rights evidence are reviewed, and the relevant
+              rights holder is contacted where needed.
+            </li>
+            <li>
+              The record is resolved: retained, corrected, replaced, restricted,
+              or withdrawn.
+            </li>
+            <li>The final decision, evidence and date are logged.</li>
+          </ol>
+          <p>
+            The &quot;report a problem&quot; link on every paper page feeds
+            directly into this process. Formal contact channels for
+            institutions and contributors are not set up yet.
+          </p>
+        </section>
 
-      <h2>Contact</h2>
-      <p>
-        This project is run independently. For any queries, issues, or
-        corrections, contact{" "}
-        <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
-      </p>
-    </div>
+        <section>
+          <h2>Contact</h2>
+          <p>
+            This project is run independently. For any queries, issues, or
+            corrections, contact{" "}
+            <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
+          </p>
+        </section>
+      </div>
+    </>
   );
 }

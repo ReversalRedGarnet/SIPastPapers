@@ -70,8 +70,9 @@ export default async function HomePage() {
 
       {/* The intro: what the archive is, the two things every visitor
           should know (in a tinted panel), how to use it, then the small
-          links and the also-known-as line (kept on the page for search). */}
-      <div className="home-intro measure">
+          links and the also-known-as line (kept on the page for search).
+          From laptop width the panel moves beside the text (globals.css). */}
+      <div className="home-intro">
         <p className="lede">
           The SI National Exam Archive is a free, publicly searchable
           collection of past Solomon Islands national examination papers.
