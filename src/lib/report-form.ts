@@ -12,7 +12,7 @@ import type { ReportStatusCode } from "@/lib/report-status";
  * well-behaved.
  */
 
-export const ISSUE_TYPES = [
+const ISSUE_TYPES = [
   "wrong_metadata",
   "missing_or_corrupt",
   "suspected_authenticity",

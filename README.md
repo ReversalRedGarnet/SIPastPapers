@@ -6,7 +6,7 @@ as Year 11, SISC Level 2/SINF6 otherwise known as Year 12), built for
 public use.
 
 **Status:** Phase 3 — live at
-[sipastexams.com](https://sipastexams.com), with 291
+[sipastexams.com](https://sipastexams.com), with over 500
 published papers across all three exam levels. Next.js app backed by a
 real Postgres (Neon) database and file storage (local filesystem by
 default for dev, Cloudflare R2 in production — see "What's implemented"
@@ -41,8 +41,11 @@ in the repository.
     published yet is shown with a "No papers yet" badge rather than
     hidden. (The full year × subject coverage matrix is a CLI-only view —
     see `coverage` under "Admin" below.)
-  - `/exams/[series]/[year]/[subject]/[artifact]` — document page, 404s if
-    nothing published exists at that address.
+  - `/exams/[series]/[year]/[subject]/[artifact]` — document page for a
+    published paper or a "not yet recovered" placeholder; 404s if neither
+    exists at that address.
+  - `/missing` — every paper known to be missing, by exam level, each with
+    an "Email it to us" link for sending in a copy.
   - `/about` — project purpose, ownership, rights statement, correction process.
   - Everything gracefully falls back to an empty state — the database starts
     with zero artifacts.
@@ -216,7 +219,7 @@ token with **read-only** object access. The token that can write
 | `RATE_LIMIT_*` overrides | Optional | See `.env.example`. |
 | `PAGE_PATHS_MIN_RELOAD_SECONDS` | Optional | `src/proxy.ts` reloads its list of real page addresses when asked for one not in it, at most this often (default 30): a newly published paper is reachable within 30 s. |
 | `PAGE_PATHS_REFRESH_SECONDS` | Optional | The proxy also reloads the list this often regardless (default 300); this is what drops a withdrawn paper's address. |
-| `DATABASE_URL` | CLI only | Direct connection, for `npm run db:migrate`. |
+| `DATABASE_URL` | CLI only | Direct connection, for `npm run db:migrate`. Do not set it in Vercel. |
 | `DB_POOL_PROFILE`, `SIPASTPAPERS_STORAGE_ROOT` | CLI / local only | |
 
 `VERCEL_REGION` is set by Vercel itself. Building the site runs no

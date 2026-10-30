@@ -504,7 +504,7 @@ export const searchPublicArtifactsCached = unstable_cache(
   { revalidate: 60 }
 );
 
-export const RESULTS_PAGE_SIZE = 25;
+const RESULTS_PAGE_SIZE = 25;
 const RESULTS_MAX_PAGE_SIZE = 100;
 
 export interface PublicArtifactPage {
@@ -782,8 +782,7 @@ export interface CoverageCell {
   year: number;
   subjectSlug: string;
   subjectName: string;
-  // The collapsed, across-all-types status -- same semantics as before this
-  // cell also tracked a `byType` breakdown, kept so a cell with only one
+  // The collapsed, across-all-types status, so a cell with only one
   // artifact type still has a single obvious status to check.
   status: CoverageStatus;
   // One entry per artifact type this subject has ever had ingested for it,

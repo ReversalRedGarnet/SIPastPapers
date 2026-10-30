@@ -18,7 +18,6 @@ let pool: Pool | undefined;
 // connection problems like this — never a genuine error in the data or
 // the SQL itself, since retrying that would just fail again in exactly
 // the same way.
-export { isTransientConnectionError } from "./transient-error";
 
 const RETRY_BASE_DELAY_MS = 500;
 

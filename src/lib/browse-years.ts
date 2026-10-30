@@ -7,8 +7,8 @@ import type { ExamContentAvailability } from "@/lib/db/queries";
  * — a year should still be there to click into (even if it shows as
  * empty) before anything has been added for it.
  */
-export const BROWSE_YEAR_FROM = 2015;
-export const BROWSE_YEAR_TO = 2025;
+const BROWSE_YEAR_FROM = 2015;
+const BROWSE_YEAR_TO = 2025;
 
 /** The fixed list of years shown when browsing, newest year first. */
 // `number[]` means "an array (a list) of numbers" -- the square brackets

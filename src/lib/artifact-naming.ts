@@ -65,7 +65,7 @@ const PAPER_NO_DISPLAY_LABEL: Record<string, string> = {
  * one of the known special cases above (e.g. a plain paper number like
  * "1", which callers handle their own way).
  */
-export function paperNoDisplayLabel(paperNo: string | null): string | null {
+function paperNoDisplayLabel(paperNo: string | null): string | null {
   if (!paperNo) return null;
   return PAPER_NO_DISPLAY_LABEL[paperNo] ?? null;
 }

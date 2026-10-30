@@ -33,7 +33,7 @@ export const APPROVED_RIGHTS_STATUSES: readonly RightsStatus[] = ["permission_gr
  * passing) -- so every public read checks them again too, rather than
  * trusting the "published" status alone.
  */
-export const RIGHTS_CURRENTLY_APPROVED = `exists (
+const RIGHTS_CURRENTLY_APPROVED = `exists (
   select 1 from (
     select rr.rights_status, rr.expiry_date
     from rights_records rr
@@ -72,7 +72,7 @@ export const QUARANTINE_PREFIX = "quarantine/";
  * even if it somehow did, the paper is treated as not servable rather than
  * served from quarantine.
  */
-export const NO_QUARANTINED_FILES = `not exists (
+const NO_QUARANTINED_FILES = `not exists (
   select 1 from files fq
   where fq.artifact_id = a.id and starts_with(fq.storage_key, '${QUARANTINE_PREFIX}')
 )`;

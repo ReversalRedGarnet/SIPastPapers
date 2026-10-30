@@ -32,7 +32,7 @@ export function escapeHtml(text: string): string {
  * but only if it's on this same site (never an outside address),
  * otherwise the homepage.
  */
-export function backHref(request: NextRequest): string {
+function backHref(request: NextRequest): string {
   const referer = request.headers.get("referer");
   if (!referer) return "/";
   try {

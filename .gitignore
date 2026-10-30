@@ -34,13 +34,9 @@ yarn-error.log*
 .env*
 !.env.example
 
-# local file storage (Phase 1 storage backend) — never commit uploaded content
+# local file storage (STORAGE_BACKEND=local) — never commit uploaded content
 /local-storage/*
 !/local-storage/.gitkeep
-
-# local SQLite database (Phase 2 dev database) — never commit
-/local-data/*
-!/local-data/.gitkeep
 
 # vercel
 .vercel
