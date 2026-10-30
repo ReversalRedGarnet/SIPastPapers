@@ -348,6 +348,13 @@ main .empty-state p {
   padding-block: 1.75rem;
 }
 
+/* The lines divide sections from each other, not the first section from
+   the page title just above it. */
+.prose > h1 + section {
+  border-top: none;
+  padding-top: 1rem;
+}
+
 .prose > section > h2 {
   margin-top: 0;
 }
@@ -1301,10 +1308,10 @@ dl.meta-table dd {
   color: var(--color-muted);
 }
 
-/* The notice box on About, /missing and a placeholder paper's page: a
-   quiet warm grey, no border, dark text (colors in --notice-* at the top).
-   It shrinks to its text, so a short notice doesn't leave a band of empty
-   box across a wide page. Red is NOT used here: see .home-banner. */
+/* The notice box on /missing and a placeholder paper's page: a quiet warm
+   grey, no border, dark text (colors in --notice-* at the top). It shrinks
+   to its text, so a short notice doesn't leave a band of empty box across
+   a wide page. Red is NOT used here: see .home-banner. */
 .notice {
   width: fit-content;
   max-width: 100%;

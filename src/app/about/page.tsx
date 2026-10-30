@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { CONTACT_EMAIL, INDEPENDENCE_NOTE, OWNER_NAME, PAST_PAPERS_ONLY_LEAD, pastPapersOnlyDetail } from "@/lib/site";
+import { CONTACT_EMAIL, INDEPENDENCE_NOTE, OWNER_NAME } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "About",
@@ -8,20 +8,11 @@ export const metadata: Metadata = {
   alternates: { canonical: "/about" },
 };
 
-// Rebuilt once a day so the year in pastPapersOnlyNote() rolls over by
-// itself (unchanged content costs no ISR write).
-export const revalidate = 86400;
-
 export default function AboutPage() {
   return (
     // One centred column of text (.prose in globals.css), never side by side.
     <div className="prose">
       <h1>About this project</h1>
-      <div className="notice">
-        <p>
-          <strong>{PAST_PAPERS_ONLY_LEAD}</strong> {pastPapersOnlyDetail()}
-        </p>
-      </div>
 
       <section>
         <h2>Purpose</h2>
