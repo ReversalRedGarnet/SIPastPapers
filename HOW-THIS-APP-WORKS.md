@@ -67,8 +67,10 @@ what you need to understand this whole project.
 - **File storage** is where the actual PDF files live — either on the same
   computer's disk (for a developer working locally) or in a cloud storage
   service called Cloudflare R2 (for the real, published website). When
-  someone downloads a paper, the website fetches the actual file bytes
-  from here, not from the database.
+  someone opens a paper on the real website, the website checks the paper
+  may be shown, then hands the browser a short-lived link (10 minutes) to
+  fetch the file straight from R2 — the file itself never passes through
+  the website. Only a developer's local copy sends the file bytes itself.
 - **The command-line tool** (often called "the CLI", short for
   "command-line interface") is a separate program that only the person
   running the archive uses, from their own computer, by typing commands
@@ -113,7 +115,9 @@ address can be anything, and whatever it is gets handed to the page."
 
 A handful of routes aren't pages at all — they don't return anything to
 look at, just raw data or a file. Those are used for things like
-downloading a PDF, or generating a zip file of every paper for one year.
+downloading a PDF, or handing out the ready-made zip of every paper for
+one year (the command-line tool builds those zips in advance; the website
+never builds one).
 
 ## Where to start reading the code
 
