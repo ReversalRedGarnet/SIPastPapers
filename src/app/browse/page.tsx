@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Badge } from "@/components/Badge";
 import { getExamContentAvailability, listExamSeries } from "@/lib/db/queries";
-import { seriesIsEmpty } from "@/lib/browse-years";
+import { BROWSE_YEAR_FROM, BROWSE_YEAR_TO, seriesIsEmpty } from "@/lib/browse-years";
 import { seriesDisplayLabel } from "@/lib/format";
 
 export const metadata: Metadata = {
@@ -31,11 +31,17 @@ export default async function BrowsePage() {
       {examSeries.length === 0 ? (
         <p className="empty-state">No exam levels have been set up yet.</p>
       ) : (
-        <ul className="list-rows list-rows--tiles">
+        <ul className="list-rows list-rows--tiles list-rows--levels">
           {examSeries.map((s) => (
             <li key={s.code}>
               <Link prefetch={false} href={`/browse/${s.code}`} className="list-row">
-                <span className="list-row__label">{seriesDisplayLabel(s.code)}</span>
+                {/* The level, then its exam's own name and the years covered. */}
+                <span className="list-row__label">
+                  {seriesDisplayLabel(s.code)}
+                  <span className="list-row__sub">
+                    {s.name} · {BROWSE_YEAR_FROM}–{BROWSE_YEAR_TO}
+                  </span>
+                </span>
                 {seriesIsEmpty(s.code, availability) && <Badge tone="neutral">No papers yet</Badge>}
                 <span className="list-row__chevron" aria-hidden="true">
                   ›

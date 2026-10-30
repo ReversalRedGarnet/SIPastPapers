@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { CONTACT_EMAIL, INDEPENDENCE_NOTE, pastPapersOnlyNote } from "@/lib/site";
+import { CONTACT_EMAIL, INDEPENDENCE_NOTE, OWNER_NAME, PAST_PAPERS_ONLY_LEAD, pastPapersOnlyDetail } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "About",
@@ -17,7 +17,9 @@ export default function AboutPage() {
     <>
       <h1>About this project</h1>
       <div className="callout">
-        <p>{pastPapersOnlyNote()}</p>
+        <p>
+          <strong>{PAST_PAPERS_ONLY_LEAD}</strong> {pastPapersOnlyDetail()}
+        </p>
       </div>
 
       {/* The sections side by side as the width allows (see .prose-columns
@@ -88,7 +90,7 @@ export default function AboutPage() {
           <h2>Contact</h2>
           <p>
             This project is run independently. For any queries, issues, or
-            corrections, contact{" "}
+            corrections, contact {OWNER_NAME} at{" "}
             <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
           </p>
         </section>

@@ -24,7 +24,7 @@ export const revalidate = 300;
  * the file itself, since an email without it can't be used.
  */
 function mailtoHref(row: MissingPaperRow): string {
-  const subject = `I have: ${row.examSeriesName} ${row.subjectName} ${row.year} (${row.missingTypes.join(" + ")})`;
+  const subject = `Attached: ${row.examSeriesName} ${row.subjectName} ${row.year} (${row.missingTypes.join(" + ")})`;
   return `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(ATTACHMENT_REQUEST)}`;
 }
 
@@ -80,7 +80,7 @@ export default async function MissingPapersPage() {
         groups.map((group) => (
           <div key={group.examSeriesCode} style={{ marginTop: "2rem" }}>
             <h2>{seriesDisplayLabel(group.examSeriesCode)}</h2>
-            <div className="data-table table-scroll">
+            <div className="data-table table-scroll missing-table-wrap">
               <table className="missing-table">
                 <caption className="visually-hidden">
                   Missing papers for {seriesDisplayLabel(group.examSeriesCode)}

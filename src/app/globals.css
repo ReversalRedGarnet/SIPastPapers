@@ -38,6 +38,11 @@
   --radius-sm: 6px;
   --radius-md: 8px;
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05);
+  /* The red notice panel (.callout). White on #9b1c1c is 8.2:1 (WCAG AA
+     needs 4.5:1); the darker edge is 13:1 against the page. */
+  --notice-bg: #9b1c1c;
+  --notice-fg: #ffffff;
+  --notice-edge: #5c0f0f;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -60,6 +65,10 @@
     --si-gold: #d8a93d;
     --si-blue-tint: #131e30;
     --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4);
+    /* A deeper red, so the panel doesn't glare on the dark page: white on
+       #7f1d1d is 10:1; the light edge is 6:1 against the page. */
+    --notice-bg: #7f1d1d;
+    --notice-edge: #f87171;
   }
 }
 
@@ -299,10 +308,12 @@ h6 {
 
 /* A readable line length (about 65-80 characters) for every paragraph on
    a page, whatever column it sits in, so text never stretches across a
-   wide screen. (ch is relative to the text's own size.) A dashed
-   "nothing here" box keeps its full width: its text is centred in it. */
+   wide screen. (ch is the width of a "0" in the text's own size, wider
+   than an average letter: 60ch holds about 75 characters of real text.)
+   A dashed "nothing here" box keeps its full width: its text is centred
+   in it. */
 main p {
-  max-width: 72ch;
+  max-width: 60ch;
 }
 
 main .empty-state,
@@ -320,7 +331,7 @@ main .empty-state p {
 }
 
 .prose-columns > section {
-  max-width: 72ch;
+  max-width: 60ch;
 }
 
 /* Cards ------------------------------------------------------------------ */
@@ -612,14 +623,38 @@ button.button--gradient,
   background: none;
 }
 
+/* A row's second, smaller line (the /browse level cards). */
+.list-row__sub {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
+/* /browse's three exam levels: bigger cards with a bold level name. */
+.list-rows--levels .list-row {
+  padding: 1rem 1.25rem;
+}
+
+.list-rows--levels .list-row__label {
+  font-weight: 600;
+  font-size: 1.0625rem;
+}
+
+.list-rows--levels .list-row__sub {
+  font-weight: 400;
+}
+
 /* A list that can use extra width (Browse, a paper's "More papers"):
    one joined list where it's narrow; where its column has room, a grid
    of separate rows, as many across as fit, so a wide screen shows more
-   of the list at once instead of very long rows. */
+   of the list at once instead of very long rows. auto-fit: a short list
+   (three levels, two papers) shares the whole row evenly instead of
+   leaving empty slots at its end. */
 @container (min-width: 36rem) {
   .list-rows--tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
     gap: 0.5rem;
     border: none;
     border-radius: 0;
@@ -799,6 +834,13 @@ th {
 
 .missing-table__action {
   width: 12.5rem;
+}
+
+/* The /missing tables are no wider than their contents need, so on a
+   wide screen each "Email it to us" button sits just after its row's
+   badges, not alone at the far right. */
+.missing-table-wrap {
+  max-width: 56rem;
 }
 
 /* Below the tablet/mobile breakpoint (matches .browse-layout's stacking
@@ -1143,15 +1185,22 @@ dl.meta-table dd {
   color: var(--color-muted);
 }
 
-/* A short, plain-language callout box -- currently just the /missing
-   page's "we don't have these yet" explanation, kept visually distinct
-   from an ordinary paragraph so it reads as the one thing to notice first
-   on the page, not another line of body text. Informational, not a
-   warning, so it uses the calm blue tint rather than the amber warning
-   colors. */
+/* The red notice panel: "past papers only" and "independent" (homepage,
+   About) and the /missing intro -- the one thing on each page that must
+   not be missed. Solid deep red with white text and a thick darker edge,
+   its first sentence in bold (the markup's <strong>); colors and their
+   contrast are in the --notice-* tokens at the top.
+
+   The panel shrinks to its text, so a short notice doesn't leave a band of
+   empty red across a wide page; the text still keeps a readable line
+   length (main p). On the homepage it fills its column instead (below). */
 .callout {
-  border: 1px solid var(--color-border);
-  background: var(--si-blue-tint);
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--notice-bg);
+  border-left: 6px solid var(--notice-edge);
+  background: var(--notice-bg);
+  color: var(--notice-fg);
   border-radius: var(--radius-md);
   padding: 1rem 1.25rem;
   margin: 1rem 0;
@@ -1161,13 +1210,17 @@ dl.meta-table dd {
   margin: 0;
 }
 
+.callout a {
+  color: inherit;
+}
+
 .callout p + p {
   margin-top: 0.5rem;
 }
 
-/* The homepage intro (see page.tsx). Two text sizes only: the .lede size
-   for the paragraphs and the notice, the .hint size for the small lines,
-   so the tinted notice panel is the one thing that stands out. */
+/* The homepage intro (see page.tsx): the lead paragraph, the red notice
+   panel, then the small links. Two text sizes only: the .lede size for
+   the lead and the notice, the .hint size for the links. */
 .home-intro {
   display: grid;
   gap: 0.75rem var(--column-gap);
@@ -1177,29 +1230,49 @@ dl.meta-table dd {
   margin: 0;
 }
 
+.home-intro .callout {
+  font-size: 0.9375rem;
+}
+
 /* From laptop width: the text on the left, the notice panel on the right,
    in the same two columns as the Search and Browse cards below, so all
-   four share left and right edges. The panel spans every text row; the
-   last row (1fr) takes up any extra height if the panel is the taller. */
+   four share left and right edges. The panel fills its column and is
+   exactly as tall as the text beside it: the lead at its top, the links
+   at its bottom. Its column is narrow enough that the notice's lines stay
+   readable without a limit of their own. */
 @media (min-width: 64rem) {
   .home-intro {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: repeat(4, auto) 1fr;
+    grid-template-rows: auto 1fr;
   }
 
   .home-intro > * {
     grid-column: 1;
   }
 
+  .home-intro > .home-intro__links {
+    align-self: end;
+  }
+
   .home-intro > .callout {
     grid-column: 2;
     grid-row: 1 / -1;
-    align-self: start;
+    width: auto;
+  }
+
+  .home-intro .callout p {
+    max-width: none;
   }
 }
 
-.home-intro .callout {
-  font-size: 0.9375rem;
+/* Large screens: the right-hand column (notice, Browse card) stays
+   narrower than the left (lead, Search card), so the notice's lines don't
+   grow past about 80 characters. */
+@media (min-width: 90rem) {
+  .home-intro,
+  .card-grid {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
 }
 
 /* "Report an issue" and "N papers still missing" side by side, wrapping

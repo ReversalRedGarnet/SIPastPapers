@@ -8,7 +8,7 @@ import { artifactTypeLabel, paperVariantLabel } from "@/lib/artifact-naming";
 import { seriesDisplayLabel } from "@/lib/format";
 import { paperPath } from "@/lib/page-links";
 import { deriveMissingPaperRows } from "@/lib/missing-papers";
-import { INDEPENDENCE_NOTE, pastPapersOnlyNote } from "@/lib/site";
+import { INDEPENDENCE_NOTE, PAST_PAPERS_ONLY_LEAD, pastPapersOnlyDetail } from "@/lib/site";
 
 // The list of papers only changes when the operator publishes or
 // unpublishes something using the command-line tool — it doesn't change
@@ -69,9 +69,10 @@ export default async function HomePage() {
       <h1 className="visually-hidden">SI National Exam Archive</h1>
 
       {/* The intro: what the archive is, the two things every visitor
-          should know (in a tinted panel), how to use it, then the small
-          links and the also-known-as line (kept on the page for search).
-          From laptop width the panel moves beside the text (globals.css). */}
+          should know (in the red notice panel), then the small links. From
+          laptop width the panel moves beside the text, the same height as
+          it (globals.css). "SI Past Papers" and "SI Past Exams" are in the
+          site's title and description (layout.tsx), for search. */}
       <div className="home-intro">
         <p className="lede">
           The SI National Exam Archive is a free, publicly searchable
@@ -80,15 +81,11 @@ export default async function HomePage() {
           ones they&apos;ll actually sit.
         </p>
         <div className="callout">
-          <p>{pastPapersOnlyNote()}</p>
+          <p>
+            <strong>{PAST_PAPERS_ONLY_LEAD}</strong> {pastPapersOnlyDetail()}
+          </p>
           <p>{INDEPENDENCE_NOTE}</p>
         </div>
-        <p className="lede">
-          Browse by exam level, year, and subject, or search directly for a
-          specific paper below. The archive is actively growing, not every
-          past exam is available yet, but more papers are being added as
-          they&apos;re gathered and verified.
-        </p>
         <p className="hint home-intro__links">
           <span>
             Spotted a paper that&apos;s missing, wrong, or looks altered?{" "}
@@ -101,7 +98,6 @@ export default async function HomePage() {
             </span>
           )}
         </p>
-        <p className="hint">Also known as SI Past Papers or SI Past Exams.</p>
       </div>
 
       <div className="card-grid" style={{ marginTop: "1.5rem" }}>
