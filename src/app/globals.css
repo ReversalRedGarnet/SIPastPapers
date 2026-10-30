@@ -1235,9 +1235,10 @@ dl.meta-table dd {
 
 /* The homepage banner: the ONLY red on the site. A strip the full width of
    the screen, directly under the header; its text sits in a centred
-   block, left-aligned so both paragraphs start at the same x, and keeps
-   the general line limit (main p). White on #9b1c1c is 8.2:1 and on the
-   dark-mode #7f1d1d 10.0:1 (WCAG AA needs 4.5:1).
+   block, left-aligned so both paragraphs start at the same x. Unlike other
+   paragraphs it has no line limit: each line stays whole where the screen
+   is wide enough (about 1100px) and wraps below. White on #9b1c1c is
+   8.2:1 and on the dark-mode #7f1d1d 10.0:1 (WCAG AA needs 4.5:1).
 
    The strip is inside <main>, which has the page's width: the border-image
    paints the same red out to both screen edges as "ink overflow", which
@@ -1266,6 +1267,7 @@ dl.meta-table dd {
 
 .home-banner p {
   margin: 0;
+  max-width: none;
   font-size: 1rem;
   font-weight: 600;
   line-height: 1.6;
