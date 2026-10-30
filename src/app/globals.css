@@ -227,8 +227,10 @@ main {
   container-type: inline-size;
 }
 
-/* The footer: one centred navy row -- the site's name, then About and
-   Report an issue -- on every page and at every width. */
+/* The footer: one navy row that mirrors the header -- the site's name at
+   the container's left edge (where the header's name is), About and Report
+   an issue at its right edge (where the header's nav ends). Below about
+   600px: the name on its own line, the links under it, all left-aligned. */
 .site-footer {
   background: var(--si-blue-deep);
   color: var(--chrome-fg);
@@ -245,7 +247,7 @@ main {
   flex-wrap: wrap;
   gap: 0 1.5rem;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   white-space: nowrap;
 }
 
@@ -254,15 +256,11 @@ main {
   gap: 0 1.5rem;
 }
 
-/* Phones: a smaller size and tighter gaps keep the three on one row. */
-@media (max-width: 30rem) {
-  .site-footer {
-    font-size: 0.8125rem;
-  }
-
-  .site-footer__inner,
-  .site-footer nav {
-    column-gap: 1rem;
+@media (max-width: 37.5rem) {
+  .site-footer__inner {
+    flex-direction: column;
+    align-items: flex-start;
+    padding-top: 0.85rem;
   }
 }
 
@@ -277,8 +275,10 @@ main {
   min-height: 2.75rem;
 }
 
+/* The dark-mode gold in both modes: the light-mode --si-gold is only
+   3.5:1 on the footer's navy; this is 5.2:1 (light) and 6.0:1 (dark). */
 .site-footer a:hover {
-  color: var(--si-gold);
+  color: #d8a93d;
 }
 
 /* Typography ------------------------------------------------------------ */
