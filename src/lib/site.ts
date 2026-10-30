@@ -22,17 +22,25 @@ export const CONTACT_EMAIL = "dorihaop@gmail.com";
 /** The body of every "send us this paper" email (/missing and a placeholder's own page). */
 export const ATTACHMENT_REQUEST = "Please attach the paper file to this email. Emails without an attachment can't be added.";
 
-/** Who runs the site, and who doesn't (the footer and the About page). */
+/** Who runs the site, and who doesn't, in full (the About page only). */
 export const INDEPENDENCE_NOTE =
   "sipastexams.com is an independent, student-run archive. It is not run by or affiliated with the Solomon Islands Government, the Ministry of Education, or any exam authority.";
 
-/** Who builds and maintains the site (the footer and the About page). */
+/**
+ * The homepage banner's second line, under pastPapersOnlyNote(). Exactly
+ * as approved: no full stop.
+ */
+export const INDEPENDENT_SITE_NOTE =
+  "This is an independent website that is not affiliated with the Government of Solomon Islands";
+
+/** Who builds and maintains the site (the About page's Contact line). */
 export const OWNER_NAME = "Aziel Orihao";
 
 /**
- * What the site doesn't have (the homepage and the About page). The year is
- * this year in Honiara, so the line never goes stale. Pages show it as
- * PAST_PAPERS_ONLY_LEAD in bold, then pastPapersOnlyDetail().
+ * What the site doesn't have: the homepage banner's first line, and the
+ * About page's notice. The year is this year in Honiara, so the line
+ * never goes stale. About shows it as PAST_PAPERS_ONLY_LEAD in bold, then
+ * pastPapersOnlyDetail().
  */
 export function pastPapersOnlyNote(now: Date = new Date()): string {
   return `${PAST_PAPERS_ONLY_LEAD} ${pastPapersOnlyDetail(now)}`;
