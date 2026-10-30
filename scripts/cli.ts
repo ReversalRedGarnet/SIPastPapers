@@ -992,10 +992,9 @@ const ARTIFACT_TYPE_CODE: Record<ArtifactType, string> = {
 // only ever get question papers ingested) renders as a single collapsed
 // label. A subject that tracks more than one type (question paper +
 // marking scheme, or + examiner report/listening comprehension/practical
-// paper) always shows the full
-// per-type breakdown -- even when every type currently agrees -- so a
-// cell's status can never quietly regress back to a single misleading
-// label if one of its types changes later.
+// paper) always shows the full per-type breakdown -- even when every type
+// currently agrees -- so a cell's status can never quietly regress back to
+// a single misleading label if one of its types changes later.
 function renderCell(cell: CoverageCell): string {
   if (cell.byType.length <= 1) {
     return COVERAGE_LABEL[cell.status];
