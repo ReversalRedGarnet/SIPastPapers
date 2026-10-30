@@ -31,7 +31,7 @@ export const VALID_TYPES: ArtifactType[] = [
 
 // --- PDF validity -----------------------------------------------------------
 
-export function isLikelyPdf(buffer: Buffer): boolean {
+function isLikelyPdf(buffer: Buffer): boolean {
   return buffer.length > 4 && buffer.subarray(0, 4).toString("ascii") === "%PDF";
 }
 
@@ -103,7 +103,7 @@ export interface IngestCommonFlags {
  * Batch filename convention: <artifact-type-slug>_<paper-no>.pdf, with the
  * paper-no segment omitted when not applicable (e.g. examiner-report.pdf).
  */
-export const BATCH_FILENAME_PATTERN = /^([a-z]+(?:-[a-z]+)*)(?:_([A-Za-z0-9]+))?\.pdf$/i;
+const BATCH_FILENAME_PATTERN = /^([a-z]+(?:-[a-z]+)*)(?:_([A-Za-z0-9]+))?\.pdf$/i;
 
 export interface BatchFileClassification {
   filename: string;
@@ -113,7 +113,7 @@ export interface BatchFileClassification {
   ok: boolean;
 }
 
-export function classifyBatchFile(dirPath: string, entry: string): BatchFileClassification {
+function classifyBatchFile(dirPath: string, entry: string): BatchFileClassification {
   const match = entry.match(BATCH_FILENAME_PATTERN);
   if (!match) {
     return {

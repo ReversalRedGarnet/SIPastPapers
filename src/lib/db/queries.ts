@@ -504,7 +504,7 @@ export const searchPublicArtifactsCached = unstable_cache(
   { revalidate: 60 }
 );
 
-export const RESULTS_PAGE_SIZE = 25;
+const RESULTS_PAGE_SIZE = 25;
 const RESULTS_MAX_PAGE_SIZE = 100;
 
 export interface PublicArtifactPage {
