@@ -38,11 +38,16 @@
   --radius-sm: 6px;
   --radius-md: 8px;
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05);
-  /* The red notice panel (.callout). White on #9b1c1c is 8.2:1 (WCAG AA
-     needs 4.5:1); the darker edge is 13:1 against the page. */
-  --notice-bg: #9b1c1c;
-  --notice-fg: #ffffff;
-  --notice-edge: #5c0f0f;
+  /* The neutral notice box (.notice): dark text on warm grey, 14.0:1;
+     its links (--color-accent) 9.8:1. */
+  --notice-bg: #efece6;
+  --notice-fg: #201f1e;
+  --notice-link: var(--color-accent);
+  /* The thin line between About's sections. */
+  --rule: #e3e0da;
+  /* main's top padding: the homepage banner pulls itself up by this much
+     to sit directly under the header. */
+  --main-pad-top: 1.75rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -65,10 +70,13 @@
     --si-gold: #d8a93d;
     --si-blue-tint: #131e30;
     --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4);
-    /* A deeper red, so the panel doesn't glare on the dark page: white on
-       #7f1d1d is 10:1; the light edge is 6:1 against the page. */
-    --notice-bg: #7f1d1d;
-    --notice-edge: #f87171;
+    /* Light text on a dark warm grey, 12.3:1. The page's link blue would
+       be 4.2:1 on it (under WCAG AA's 4.5:1), so links in it are lighter:
+       5.6:1. */
+    --notice-bg: #302d29;
+    --notice-fg: #f3f2f1;
+    --notice-link: #7ea6f2;
+    --rule: #3b3a39;
   }
 }
 
@@ -213,16 +221,16 @@ main,
 
 main {
   flex: 1 0 auto;
-  padding: 1.75rem 0 3rem;
+  padding: var(--main-pad-top) 0 3rem;
   /* Lets lists inside the page change layout by the room they actually
      have (see .list-rows--tiles), not by the screen width. */
   container-type: inline-size;
 }
 
+/* The footer: one centred navy row -- the site's name, then About and
+   Report an issue -- on every page and at every width. */
 .site-footer {
-  /* Blue -> deep green wash: the footer's half of the header/footer
-     pairing (see .site-header above and the color-system proposal). */
-  background: linear-gradient(135deg, var(--si-blue) 0%, var(--si-green) 100%);
+  background: var(--si-blue-deep);
   color: var(--chrome-fg);
   font-size: 0.875rem;
 }
@@ -232,18 +240,30 @@ main {
 }
 
 .site-footer__inner {
-  padding: 1.25rem 0;
+  padding: 0.5rem 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
+  gap: 0 1.5rem;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
+  white-space: nowrap;
 }
 
 .site-footer nav {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0 1rem;
+  gap: 0 1.5rem;
+}
+
+/* Phones: a smaller size and tighter gaps keep the three on one row. */
+@media (max-width: 30rem) {
+  .site-footer {
+    font-size: 0.8125rem;
+  }
+
+  .site-footer__inner,
+  .site-footer nav {
+    column-gap: 1rem;
+  }
 }
 
 .site-footer a {
@@ -255,16 +275,6 @@ main {
   display: inline-flex;
   align-items: center;
   min-height: 2.75rem;
-}
-
-/* The independence line: a full-width line of its own under the links.
-   The text is capped to a readable length with end padding, not
-   max-width: a narrower box would no longer force its own line. */
-.site-footer__note {
-  flex: 1 0 100%;
-  padding-inline-end: max(0px, 100% - 56ch);
-  text-wrap: pretty;
-  margin: 0;
 }
 
 .site-footer a:hover {
@@ -321,17 +331,29 @@ main .empty-state p {
   max-width: none;
 }
 
-/* Running text in columns (About): one column on phones and tablets,
-   two on a laptop, three on a large screen. */
-.prose-columns {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr));
-  gap: 0 var(--column-gap);
-  align-items: start;
+/* A page of running text (About): always ONE centred column, never text
+   side by side; sections divided by a thin line. The column's own 64ch
+   sets the line length, so its paragraphs drop the general limit. */
+.prose {
+  max-width: 64ch;
+  margin-inline: auto;
 }
 
-.prose-columns > section {
-  max-width: 60ch;
+.prose p {
+  max-width: none;
+}
+
+.prose > section {
+  border-top: 1px solid var(--rule);
+  padding-block: 1.75rem;
+}
+
+.prose > section > h2 {
+  margin-top: 0;
+}
+
+.prose > section > :last-child {
+  margin-bottom: 0;
 }
 
 /* Cards ------------------------------------------------------------------ */
@@ -1185,111 +1207,100 @@ dl.meta-table dd {
   color: var(--color-muted);
 }
 
-/* The red notice panel: "past papers only" and "independent" (homepage,
-   About) and the /missing intro -- the one thing on each page that must
-   not be missed. Solid deep red with white text and a thick darker edge,
-   its first sentence in bold (the markup's <strong>); colors and their
-   contrast are in the --notice-* tokens at the top.
-
-   The panel shrinks to its text, so a short notice doesn't leave a band of
-   empty red across a wide page; the text still keeps a readable line
-   length (main p). On the homepage it fills its column instead (below). */
-.callout {
+/* The notice box on About, /missing and a placeholder paper's page: a
+   quiet warm grey, no border, dark text (colors in --notice-* at the top).
+   It shrinks to its text, so a short notice doesn't leave a band of empty
+   box across a wide page. Red is NOT used here: see .home-banner. */
+.notice {
   width: fit-content;
   max-width: 100%;
-  border: 1px solid var(--notice-bg);
-  border-left: 6px solid var(--notice-edge);
   background: var(--notice-bg);
   color: var(--notice-fg);
-  border-radius: var(--radius-md);
-  padding: 1rem 1.25rem;
+  border-radius: 8px;
+  padding: 16px 20px;
   margin: 1rem 0;
 }
 
-.callout p {
+.notice p {
   margin: 0;
 }
 
-.callout a {
-  color: inherit;
-}
-
-.callout p + p {
+.notice p + p {
   margin-top: 0.5rem;
 }
 
-/* The homepage intro (see page.tsx): the lead paragraph, the red notice
-   panel, then the small links. Two text sizes only: the .lede size for
-   the lead and the notice, the .hint size for the links. */
-.home-intro {
-  display: grid;
-  gap: 0.75rem var(--column-gap);
+.notice a {
+  color: var(--notice-link);
 }
 
-.home-intro > * {
+/* The homepage banner: the ONLY red on the site. A strip the full width of
+   the screen, directly under the header; its text sits in a centred
+   block, left-aligned so both paragraphs start at the same x, and keeps
+   the general line limit (main p). White on #9b1c1c is 8.2:1 and on the
+   dark-mode #7f1d1d 10.0:1 (WCAG AA needs 4.5:1).
+
+   The strip is inside <main>, which has the page's width: the border-image
+   paints the same red out to both screen edges as "ink overflow", which
+   never makes the page scroll sideways (unlike a 100vw box). */
+.home-banner {
+  background: #9b1c1c;
+  border-image: linear-gradient(#9b1c1c 0 0) fill 0 // 0 100vw;
+  color: #ffffff;
+  margin: calc(-1 * var(--main-pad-top)) 0 1.75rem;
+  padding: 1rem 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .home-banner {
+    background: #7f1d1d;
+    border-image: linear-gradient(#7f1d1d 0 0) fill 0 // 0 100vw;
+  }
+}
+
+.home-banner__inner {
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+  text-align: left;
+}
+
+.home-banner p {
   margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.6;
 }
 
-.home-intro .callout {
-  font-size: 0.9375rem;
+.home-banner p + p {
+  margin-top: 0.25rem;
 }
 
-/* From laptop width: the text on the left, the notice panel on the right,
-   in the same two columns as the Search and Browse cards below, so all
-   four share left and right edges. The panel fills its column and is
-   exactly as tall as the text beside it: the lead at its top, the links
-   at its bottom. Its column is narrow enough that the notice's lines stay
-   readable without a limit of their own. */
-@media (min-width: 64rem) {
-  .home-intro {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: auto 1fr;
-  }
-
-  .home-intro > * {
-    grid-column: 1;
-  }
-
-  .home-intro > .home-intro__links {
-    align-self: end;
-  }
-
-  .home-intro > .callout {
-    grid-column: 2;
-    grid-row: 1 / -1;
-    width: auto;
-  }
-
-  .home-intro .callout p {
-    max-width: none;
-  }
+/* The homepage intro (see page.tsx): one paragraph, then the small line
+   of links directly under it. */
+.home-intro {
+  margin: 0;
+  font-size: 1.1875rem;
+  max-width: 62ch;
 }
 
-/* Large screens: the right-hand column (notice, Browse card) stays
-   narrower than the left (lead, Search card), so the notice's lines don't
-   grow past about 80 characters. */
-@media (min-width: 90rem) {
-  .home-intro,
-  .card-grid {
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  }
-}
-
-/* "Report an issue" and "N papers still missing" side by side, wrapping
-   onto separate lines when there isn't room. */
+/* As wide as it needs (it's two short sentences, not running text). From
+   tablet width each half stays whole, so the line only breaks at the "·". */
 .home-intro__links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 1.5rem;
+  margin: 0.5rem 0 0;
+  max-width: none;
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+
+@media (min-width: 40rem) {
+  .home-intro__links > span {
+    white-space: nowrap;
+  }
 }
 
 /* Phones: the two links are full 44px tap targets (the padding makes
    each line taller rather than overlapping the next). */
 @media (max-width: 39.99rem) {
-  .home-intro__links {
-    row-gap: 0;
-  }
-
   .home-intro__links a {
     display: inline-block;
     padding-block: 0.75rem;
@@ -1363,8 +1374,12 @@ dl.meta-table dd {
 /* Small mobile screens (spec section 3.3: works well on a small screen and
    a slow connection) — stack what would otherwise get cramped. */
 @media (max-width: 30rem) {
+  :root {
+    --main-pad-top: 1.25rem;
+  }
+
   main {
-    padding: 1.25rem 0 2.5rem;
+    padding-bottom: 2.5rem;
   }
 
   h1 {
