@@ -3,13 +3,13 @@ import { LocalFilesystemStorage } from "./local-fs";
 import { R2Storage } from "./r2";
 import type { StorageProvider } from "./types";
 
-// "Re-exporting": this file passes StorageProvider/PutResult/buildStorageKey
+// "Re-exporting": this file passes StorageProvider/StorageKeyExistsError
 // straight through from ./types, without using them itself, purely so
-// other files can `import { buildStorageKey } from "@/lib/storage"` (this
-// file) instead of having to know it actually lives in a different,
+// other files can `import { StorageKeyExistsError } from "@/lib/storage"`
+// (this file) instead of having to know it actually lives in a different,
 // more specific file.
-export type { StorageProvider, PutResult, PutOptions } from "./types";
-export { buildStorageKey, StorageKeyExistsError } from "./types";
+export type { StorageProvider } from "./types";
+export { StorageKeyExistsError } from "./types";
 
 let instance: StorageProvider | undefined;
 
