@@ -1322,6 +1322,17 @@ dl.meta-table dd {
   margin: 1rem 0;
 }
 
+/* /missing's notice spans the page's full width, the same edges as the
+   tables under it, and its text uses the whole box. A deliberate exception
+   to the paragraph line limit (main p), for this box only. */
+.notice--full {
+  width: auto;
+}
+
+.notice--full p {
+  max-width: none;
+}
+
 .notice p {
   margin: 0;
 }
@@ -1379,11 +1390,13 @@ dl.meta-table dd {
 }
 
 /* The homepage intro (see page.tsx): one paragraph, then the small line
-   of links directly under it. */
+   of links directly under it. Both span the page's full width, the same
+   edges as the Search and Browse cards below: a deliberate exception to
+   the paragraph line limit (main p), for these two only. */
 .home-intro {
   margin: 0;
   font-size: 1.1875rem;
-  max-width: 62ch;
+  max-width: none;
 }
 
 /* As wide as it needs (it's two short sentences, not running text). From
