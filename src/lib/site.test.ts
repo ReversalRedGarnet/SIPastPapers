@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pastPapersOnlyNote } from "./site";
+import { INDEPENDENT_SITE_NOTE, pastPapersOnlyNote } from "./site";
 
 test("the past-papers-only note names this year in Honiara", () => {
   assert.equal(
@@ -12,4 +12,11 @@ test("the past-papers-only note names this year in Honiara", () => {
 test("the year rolls over at midnight Honiara time (UTC+11), not UTC", () => {
   assert.match(pastPapersOnlyNote(new Date("2026-12-31T12:59:00Z")), /\(2026\)/);
   assert.match(pastPapersOnlyNote(new Date("2026-12-31T13:00:00Z")), /\(2027\)/);
+});
+
+test("the homepage banner's second line is exactly the approved wording, with no full stop", () => {
+  assert.equal(
+    INDEPENDENT_SITE_NOTE,
+    "This is an independent website that is not affiliated with the Government of Solomon Islands"
+  );
 });

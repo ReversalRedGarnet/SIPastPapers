@@ -65,7 +65,7 @@ export default async function MissingPapersPage() {
 
       {/* The one place the page asks for the file itself; each row's
           email link repeats it in the email body. */}
-      <div className="callout">
+      <div className="notice">
         <p>
           <strong>We do not have these papers yet.</strong> If you have a
           copy of one, email it to us using the link on its row, with the

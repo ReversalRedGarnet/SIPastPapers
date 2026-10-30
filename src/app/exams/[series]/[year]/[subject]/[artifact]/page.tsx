@@ -205,7 +205,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
               </details>
             </>
           ) : (
-            <p className="empty-state">
+            <p className="notice">
               This paper has not yet been recovered for the archive. It is
               listed so the gap is visible rather than hidden. Do you have
               this paper? Email it to us as an attachment:{" "}
