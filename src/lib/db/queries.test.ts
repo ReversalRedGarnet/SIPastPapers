@@ -1415,3 +1415,98 @@ test("fill-placeholder reuses the same bytes left at the key by an earlier attem
     }
   });
 });
+
+// --- /browse level cards: each level's first and last year with a paper ---
+//
+// The test database is a copy of the real one, so real levels already have
+// papers. Every level here is a throwaway one (insertTestSeries), so the
+// ranges asserted are exactly what this test made. getPublishedYearRanges
+// is memoised per request (React's cache), so it is called once, after
+// everything is set up.
+
+/** The exam instance for a test level and year, created if missing. */
+async function testSeriesInstanceId(seriesId: string, year: number): Promise<string> {
+  await query(
+    `insert into exam_instances (exam_series_id, year) values ($1, $2)
+     on conflict (exam_series_id, year) do nothing`,
+    [seriesId, year]
+  );
+  const row = await queryOne<{ id: string }>(
+    "select id from exam_instances where exam_series_id = $1 and year = $2",
+    [seriesId, year]
+  );
+  return row!.id;
+}
+
+/** A published, openable paper for a test level and subject. */
+async function publishLevelPaper(seriesCode: string, subjectSlug: string, year: number, publish = true): Promise<void> {
+  const { artifactId } = await queries.ingestArtifact({
+    examSeriesCode: seriesCode,
+    year,
+    subjectSlug,
+    artifactType: "question_paper",
+    paperNo: null,
+    file: { buffer: Buffer.from(`%PDF-1.4\n%year-range-${seriesCode}-${year}\n`), mime: "application/pdf" },
+  });
+  if (!publish) return;
+  await queries.approveRights(artifactId, {
+    basis: "teacher-verified",
+    approvedBy: "Test Verifier",
+    evidenceUri: `file://evidence/year-range-${seriesCode}-${year}.pdf`,
+  });
+  assert.ok(!("missing" in (await queries.publishArtifact(artifactId))), "test paper should publish");
+}
+
+/** A "not yet recovered" placeholder (no file) for a test level, made the way the real ones were. */
+async function insertLevelPlaceholder(seriesId: string, subjectId: string, year: number): Promise<void> {
+  await query(
+    `insert into artifacts (id, exam_instance_id, subject_id, type, paper_no, title, status, published_at)
+     values ($1, $2, $3, 'marking_scheme', null, $4, 'not_yet_recovered', null)`,
+    [randomUUID(), await testSeriesInstanceId(seriesId, year), subjectId, `Year range test ${year}, not yet recovered`]
+  );
+}
+
+test("published year ranges: openable papers set each level's range; placeholders and unpublished papers don't", async () => {
+  const createdCodes: string[] = [];
+  await withRolledBackTransaction(async () => {
+    const subject = await insertTestSubject();
+
+    // Published papers in 2091 and 2094 set the range; placeholders before
+    // (2090) and after (2096) it must not stretch it.
+    const spread = await insertTestSeries();
+    await publishLevelPaper(spread.code, subject.slug, 2094);
+    await publishLevelPaper(spread.code, subject.slug, 2091);
+    await insertLevelPlaceholder(spread.id, subject.id, 2090);
+    await insertLevelPlaceholder(spread.id, subject.id, 2096);
+
+    // Papers in one year only: that one year, first and last.
+    const single = await insertTestSeries();
+    await publishLevelPaper(single.code, subject.slug, 2093);
+
+    // Nothing a student can open: only a placeholder and a paper that was
+    // never published (rights not approved). No entry at all.
+    const unopenable = await insertTestSeries();
+    await insertLevelPlaceholder(unopenable.id, subject.id, 2092);
+    await publishLevelPaper(unopenable.code, subject.slug, 2095, false);
+
+    // A level with no papers of any kind: no entry either.
+    const empty = await insertTestSeries();
+
+    createdCodes.push(spread.code, single.code, unopenable.code, empty.code);
+
+    const ranges = await queries.getPublishedYearRanges();
+    assert.deepEqual(ranges.get(spread.code), { from: 2091, to: 2094 });
+    assert.deepEqual(ranges.get(single.code), { from: 2093, to: 2093 });
+    assert.equal(ranges.has(unopenable.code), false, "a level with no openable papers has no range");
+    assert.equal(ranges.has(empty.code), false, "a level with no papers has no range");
+  });
+
+  // Everything above was rolled back: none of the test levels (or their
+  // papers, which can't exist without them) is left in the database.
+  const [left] = await query<{ n: number }>(
+    "select count(*)::int as n from exam_series where code = any($1)",
+    [createdCodes]
+  );
+  assert.equal(left.n, 0, "the test levels should be rolled back");
+});
+

@@ -26,11 +26,23 @@ export const ATTACHMENT_REQUEST = "Please attach the paper file to this email. E
 export const INDEPENDENCE_NOTE =
   "sipastexams.com is an independent, student-run archive. It is not run by or affiliated with the Solomon Islands Government, the Ministry of Education, or any exam authority.";
 
+/** Who builds and maintains the site (the footer and the About page). */
+export const OWNER_NAME = "Aziel Orihao";
+
 /**
  * What the site doesn't have (the homepage and the About page). The year is
- * this year in Honiara, so the line never goes stale.
+ * this year in Honiara, so the line never goes stale. Pages show it as
+ * PAST_PAPERS_ONLY_LEAD in bold, then pastPapersOnlyDetail().
  */
 export function pastPapersOnlyNote(now: Date = new Date()): string {
+  return `${PAST_PAPERS_ONLY_LEAD} ${pastPapersOnlyDetail(now)}`;
+}
+
+/** The first sentence of pastPapersOnlyNote(). */
+export const PAST_PAPERS_ONLY_LEAD = "Past papers only.";
+
+/** The rest of pastPapersOnlyNote(), after its first sentence. */
+export function pastPapersOnlyDetail(now: Date = new Date()): string {
   const year = new Intl.DateTimeFormat("en", { timeZone: "Pacific/Guadalcanal", year: "numeric" }).format(now);
-  return `Past papers only. We do not have current-year (${year}) papers, official booklets, or exam answers for upcoming exams.`;
+  return `We do not have current-year (${year}) papers, official booklets, or exam answers for upcoming exams.`;
 }

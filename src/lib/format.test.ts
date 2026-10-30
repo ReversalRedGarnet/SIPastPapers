@@ -7,7 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { seriesDisplayLabel } from "./format";
+import { seriesDisplayLabel, yearRangeLabel } from "./format";
 
 test("seriesDisplayLabel maps each known series code to its public label", () => {
   // These are the three actual exam series codes set up in
@@ -22,4 +22,9 @@ test("seriesDisplayLabel maps each known series code to its public label", () =>
 
 test("seriesDisplayLabel falls back to the raw code for an unknown series", () => {
   assert.equal(seriesDisplayLabel("some-future-series"), "some-future-series");
+});
+
+test("yearRangeLabel shows a span, or a single year when it starts and ends together", () => {
+  assert.equal(yearRangeLabel({ from: 2016, to: 2024 }), "2016–2024");
+  assert.equal(yearRangeLabel({ from: 2019, to: 2019 }), "2019");
 });

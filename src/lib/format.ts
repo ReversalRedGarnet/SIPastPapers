@@ -54,6 +54,11 @@ export function seriesDisplayLabel(seriesCode: string): string {
   return SERIES_DISPLAY_LABEL[seriesCode] ?? seriesCode;
 }
 
+/** "2016–2024", or just "2019" when the first and last year are the same. */
+export function yearRangeLabel(range: { from: number; to: number }): string {
+  return range.from === range.to ? String(range.from) : `${range.from}–${range.to}`;
+}
+
 // `ArtifactStatus` (imported above) is a "union type" -- TypeScript's way
 // of saying "this value must be exactly one of these specific options,
 // nothing else," e.g. "published" or "draft" but never a typo like
