@@ -348,6 +348,13 @@ main .empty-state p {
   padding-block: 1.75rem;
 }
 
+/* The lines divide sections from each other, not the first section from
+   the page title just above it. */
+.prose > h1 + section {
+  border-top: none;
+  padding-top: 1rem;
+}
+
 .prose > section > h2 {
   margin-top: 0;
 }
@@ -1301,10 +1308,10 @@ dl.meta-table dd {
   color: var(--color-muted);
 }
 
-/* The notice box on About, /missing and a placeholder paper's page: a
-   quiet warm grey, no border, dark text (colors in --notice-* at the top).
-   It shrinks to its text, so a short notice doesn't leave a band of empty
-   box across a wide page. Red is NOT used here: see .home-banner. */
+/* The notice box on /missing and a placeholder paper's page: a quiet warm
+   grey, no border, dark text (colors in --notice-* at the top). It shrinks
+   to its text, so a short notice doesn't leave a band of empty box across
+   a wide page. Red is NOT used here: see .home-banner. */
 .notice {
   width: fit-content;
   max-width: 100%;
@@ -1313,6 +1320,17 @@ dl.meta-table dd {
   border-radius: 8px;
   padding: 16px 20px;
   margin: 1rem 0;
+}
+
+/* /missing's notice spans the page's full width, the same edges as the
+   tables under it, and its text uses the whole box. A deliberate exception
+   to the paragraph line limit (main p), for this box only. */
+.notice--full {
+  width: auto;
+}
+
+.notice--full p {
+  max-width: none;
 }
 
 .notice p {
@@ -1372,11 +1390,13 @@ dl.meta-table dd {
 }
 
 /* The homepage intro (see page.tsx): one paragraph, then the small line
-   of links directly under it. */
+   of links directly under it. Both span the page's full width, the same
+   edges as the Search and Browse cards below: a deliberate exception to
+   the paragraph line limit (main p), for these two only. */
 .home-intro {
   margin: 0;
   font-size: 1.1875rem;
-  max-width: 62ch;
+  max-width: none;
 }
 
 /* As wide as it needs (it's two short sentences, not running text). From
