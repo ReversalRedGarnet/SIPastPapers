@@ -22,7 +22,6 @@
      tuned per mode instead of inheriting the theme-flipping one. */
   --si-blue: #2f425b;
   --si-blue-deep: #273c53;
-  --si-green: #254638;
   --si-gold: #b8862e;
   --si-blue-tint: #eef2f7;
   --chrome-fg: #f3f6fa;
@@ -66,7 +65,6 @@
        values above -- see the color-system proposal's rationale. */
     --si-blue: #3d537b;
     --si-blue-deep: #20314b;
-    --si-green: #346f53;
     --si-gold: #d8a93d;
     --si-blue-tint: #131e30;
     --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4);
@@ -644,14 +642,6 @@ button.button--gradient,
   flex: 0 0 auto;
 }
 
-.list-row--static {
-  cursor: default;
-}
-
-.list-row--static:hover {
-  background: none;
-}
-
 /* A row's second, smaller line (the /browse level cards). */
 .list-row__sub {
   display: block;
@@ -953,15 +943,6 @@ th {
     letter-spacing: 0.02em;
   }
 
-  /* Several badges in one cell (/missing's "Missing" types): wrap them
-     inside the card, beside the label, instead of running past its edge. */
-  .data-table .badge-list {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    min-width: 0;
-  }
-
   .data-table td:last-child {
     justify-content: flex-start;
     gap: 1rem;
@@ -1045,12 +1026,6 @@ th {
     flex-wrap: wrap;
     justify-content: flex-start;
   }
-}
-
-.matrix-cell a {
-  display: block;
-  text-decoration: none;
-  padding: 0.15rem 0;
 }
 
 /* Badges -------------------------------------------------------------- */
