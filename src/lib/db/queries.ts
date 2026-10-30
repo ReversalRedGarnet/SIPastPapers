@@ -782,8 +782,7 @@ export interface CoverageCell {
   year: number;
   subjectSlug: string;
   subjectName: string;
-  // The collapsed, across-all-types status -- same semantics as before this
-  // cell also tracked a `byType` breakdown, kept so a cell with only one
+  // The collapsed, across-all-types status, so a cell with only one
   // artifact type still has a single obvious status to check.
   status: CoverageStatus;
   // One entry per artifact type this subject has ever had ingested for it,

@@ -990,9 +990,9 @@ const ARTIFACT_TYPE_CODE: Record<ArtifactType, string> = {
 
 // A subject that only ever tracks one artifact type (e.g. most subjects
 // only ever get question papers ingested) renders as a single collapsed
-// label, same as before this command was type-aware. A subject that tracks
-// more than one type (question paper + marking scheme, or + examiner
-// report/listening comprehension/practical paper) always shows the full
+// label. A subject that tracks more than one type (question paper +
+// marking scheme, or + examiner report/listening comprehension/practical
+// paper) always shows the full
 // per-type breakdown -- even when every type currently agrees -- so a
 // cell's status can never quietly regress back to a single misleading
 // label if one of its types changes later.
