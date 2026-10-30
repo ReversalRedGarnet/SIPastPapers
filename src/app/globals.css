@@ -227,8 +227,10 @@ main {
   container-type: inline-size;
 }
 
-/* The footer: one centred navy row -- the site's name, then About and
-   Report an issue -- on every page and at every width. */
+/* The footer: one navy row that mirrors the header -- the site's name at
+   the container's left edge (where the header's name is), About and Report
+   an issue at its right edge (where the header's nav ends). Below about
+   600px: the name on its own line, the links under it, all left-aligned. */
 .site-footer {
   background: var(--si-blue-deep);
   color: var(--chrome-fg);
@@ -245,7 +247,7 @@ main {
   flex-wrap: wrap;
   gap: 0 1.5rem;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   white-space: nowrap;
 }
 
@@ -254,15 +256,11 @@ main {
   gap: 0 1.5rem;
 }
 
-/* Phones: a smaller size and tighter gaps keep the three on one row. */
-@media (max-width: 30rem) {
-  .site-footer {
-    font-size: 0.8125rem;
-  }
-
-  .site-footer__inner,
-  .site-footer nav {
-    column-gap: 1rem;
+@media (max-width: 37.5rem) {
+  .site-footer__inner {
+    flex-direction: column;
+    align-items: flex-start;
+    padding-top: 0.85rem;
   }
 }
 
@@ -277,8 +275,10 @@ main {
   min-height: 2.75rem;
 }
 
+/* The dark-mode gold in both modes: the light-mode --si-gold is only
+   3.5:1 on the footer's navy; this is 5.2:1 (light) and 6.0:1 (dark). */
 .site-footer a:hover {
-  color: var(--si-gold);
+  color: #d8a93d;
 }
 
 /* Typography ------------------------------------------------------------ */
@@ -676,7 +676,7 @@ button.button--gradient,
 @container (min-width: 36rem) {
   .list-rows--tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
     gap: 0.5rem;
     border: none;
     border-radius: 0;
@@ -812,6 +812,7 @@ th {
   font-size: 0.8125rem;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .data-table {
@@ -842,10 +843,14 @@ th {
   }
 }
 
-/* /missing: its three tables (one per exam level) share fixed column
-   widths, so the years, subjects, badges and email links line up from
-   one table to the next whatever their contents. The action column fits
-   "Email it to us" at the touch-screen size. */
+/* /missing: its three tables (one per exam level) span the page's full
+   width and share fixed column widths, so the years, subjects, badges and
+   email links line up from one table to the next whatever their contents.
+   Year is narrow; Subject is fixed (10rem on tablets, 16rem from 1024px,
+   so a very wide screen doesn't open a gulf after it); Missing takes all the
+   rest, so its badges only wrap when the cell is really full; the action
+   column fits "Email it to us" at the touch-screen size, right-aligned so
+   every button shares one right edge. */
 .missing-table {
   table-layout: fixed;
 }
@@ -854,16 +859,31 @@ th {
   width: 5.5rem;
 }
 
-.missing-table__action {
-  width: 12.5rem;
+/* Plain lengths: Chrome ignores clamp() on a fixed-layout column. */
+.missing-table__subject {
+  width: 16rem;
 }
 
-/* The /missing tables are no wider than their contents need, so on a
-   wide screen each "Email it to us" button sits just after its row's
-   badges, not alone at the far right. */
-.missing-table-wrap {
-  max-width: 56rem;
+.missing-table__action {
+  width: 11.5rem;
 }
+
+/* Tablets: the button column only as wide as the touch-size button and
+   the denser cell padding, so the badges get every spare pixel. */
+@media (max-width: 63.99rem) {
+  .missing-table__subject {
+    width: 10rem;
+  }
+
+  .missing-table__action {
+    width: 10.25rem;
+  }
+}
+
+.missing-table td:last-child {
+  text-align: right;
+}
+
 
 /* Below the tablet/mobile breakpoint (matches .browse-layout's stacking
    point), the paper-list tables (/results, homepage "Recently added")
@@ -949,6 +969,74 @@ th {
     min-height: 2.75rem;
     padding: 0.5rem 0.85rem;
     font-size: 0.9375rem;
+  }
+}
+
+/* About 700px and below: each row is a card -- year and subject on one
+   line, the badges under them, the button under those, all left-aligned.
+   Wider than the general phone cards (39.99rem, below), and laid out
+   differently, so these rules restate the card and override those. */
+@media (max-width: 43.75rem) {
+  .missing-table-wrap {
+    border: none;
+    border-radius: 0;
+  }
+
+  .missing-table,
+  .missing-table tbody {
+    display: block;
+  }
+
+  .missing-table colgroup {
+    display: none;
+  }
+
+  .missing-table thead {
+    display: block;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+
+  .missing-table tbody tr {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.5rem 0.75rem;
+    align-items: baseline;
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg);
+    box-shadow: var(--shadow-card);
+  }
+
+  .missing-table tbody tr + tr {
+    margin-top: 0.75rem;
+  }
+
+  .missing-table td,
+  .missing-table td:last-child {
+    display: block;
+    margin: 0;
+    padding: 0;
+    border: none;
+    text-align: left;
+  }
+
+  .missing-table td[data-label]::before {
+    content: none;
+  }
+
+  .missing-table td:nth-child(n + 3) {
+    grid-column: 1 / -1;
+  }
+
+  .missing-table .badge-list {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 }
 
@@ -1071,6 +1159,12 @@ th {
   display: flex;
   gap: 1rem;
   margin-top: 1.5rem;
+}
+
+/* The empty stand-in for a missing Previous or Next takes no room, so a
+   lone link reaches the page's right edge instead of stopping a gap short. */
+.paper-pager > span:empty {
+  display: none;
 }
 
 .paper-pager__link {

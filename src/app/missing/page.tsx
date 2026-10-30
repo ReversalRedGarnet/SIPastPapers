@@ -89,7 +89,7 @@ export default async function MissingPapersPage() {
                     line up from one exam level to the next. */}
                 <colgroup>
                   <col className="missing-table__year" />
-                  <col />
+                  <col className="missing-table__subject" />
                   <col />
                   <col className="missing-table__action" />
                 </colgroup>
