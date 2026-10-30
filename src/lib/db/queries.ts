@@ -347,6 +347,30 @@ export const getExamContentAvailability = cache(async (): Promise<ExamContentAva
   return { seriesWithContent, yearsWithContent };
 });
 
+/** The first and last year an exam series has a paper a student can open. */
+export interface PublishedYearRange {
+  from: number;
+  to: number;
+}
+
+/**
+ * For each exam series (by code), the earliest and latest year with a
+ * paper a student can open (OPENABLE: not placeholders, which have no
+ * file) -- the years shown on the /browse level cards. A series with no
+ * such paper has no entry. One small query; /browse is cached for an hour.
+ */
+export const getPublishedYearRanges = cache(async (): Promise<Map<string, PublishedYearRange>> => {
+  const rows = await query<{ series_code: string; first_year: number; last_year: number }>(
+    `select es.code as series_code, min(ei.year) as first_year, max(ei.year) as last_year
+     from artifacts a
+     join exam_instances ei on ei.id = a.exam_instance_id
+     join exam_series es on es.id = ei.exam_series_id
+     where ${OPENABLE}
+     group by es.code`
+  );
+  return new Map(rows.map((row) => [row.series_code, { from: row.first_year, to: row.last_year }]));
+});
+
 export interface PublicArtifactFilters {
   q?: string;
   series?: string;

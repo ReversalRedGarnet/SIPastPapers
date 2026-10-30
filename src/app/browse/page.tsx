@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Badge } from "@/components/Badge";
-import { getExamContentAvailability, listExamSeries } from "@/lib/db/queries";
-import { BROWSE_YEAR_FROM, BROWSE_YEAR_TO, seriesIsEmpty } from "@/lib/browse-years";
-import { seriesDisplayLabel } from "@/lib/format";
+import { getExamContentAvailability, getPublishedYearRanges, listExamSeries } from "@/lib/db/queries";
+import { seriesIsEmpty } from "@/lib/browse-years";
+import { seriesDisplayLabel, yearRangeLabel } from "@/lib/format";
 
 export const metadata: Metadata = {
   title: "Browse",
@@ -18,8 +18,11 @@ export const metadata: Metadata = {
 export const revalidate = 3600;
 
 export default async function BrowsePage() {
-  const examSeries = await listExamSeries();
-  const availability = await getExamContentAvailability();
+  const [examSeries, availability, yearRanges] = await Promise.all([
+    listExamSeries(),
+    getExamContentAvailability(),
+    getPublishedYearRanges(),
+  ]);
 
   return (
     <>
@@ -32,23 +35,28 @@ export default async function BrowsePage() {
         <p className="empty-state">No exam levels have been set up yet.</p>
       ) : (
         <ul className="list-rows list-rows--tiles list-rows--levels">
-          {examSeries.map((s) => (
-            <li key={s.code}>
-              <Link prefetch={false} href={`/browse/${s.code}`} className="list-row">
-                {/* The level, then its exam's own name and the years covered. */}
-                <span className="list-row__label">
-                  {seriesDisplayLabel(s.code)}
-                  <span className="list-row__sub">
-                    {s.name} · {BROWSE_YEAR_FROM}–{BROWSE_YEAR_TO}
+          {examSeries.map((s) => {
+            const range = yearRanges.get(s.code);
+            return (
+              <li key={s.code}>
+                <Link prefetch={false} href={`/browse/${s.code}`} className="list-row">
+                  {/* The level, then its exam's own name and the first to
+                      last year with a paper you can open (none yet: no years). */}
+                  <span className="list-row__label">
+                    {seriesDisplayLabel(s.code)}
+                    <span className="list-row__sub">
+                      {s.name}
+                      {range && ` · ${yearRangeLabel(range)}`}
+                    </span>
                   </span>
-                </span>
-                {seriesIsEmpty(s.code, availability) && <Badge tone="neutral">No papers yet</Badge>}
-                <span className="list-row__chevron" aria-hidden="true">
-                  ›
-                </span>
-              </Link>
-            </li>
-          ))}
+                  {seriesIsEmpty(s.code, availability) && <Badge tone="neutral">No papers yet</Badge>}
+                  <span className="list-row__chevron" aria-hidden="true">
+                    ›
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </>

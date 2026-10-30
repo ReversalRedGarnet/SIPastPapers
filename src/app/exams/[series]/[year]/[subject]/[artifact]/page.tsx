@@ -209,7 +209,7 @@ export default async function DocumentPage({ params }: DocumentPageProps) {
               This paper has not yet been recovered for the archive. It is
               listed so the gap is visible rather than hidden. Do you have
               this paper? Email it to us as an attachment:{" "}
-              <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`I have: ${seriesLabel} ${record.subject} ${record.year} — ${typeLabel}`)}&body=${encodeURIComponent(ATTACHMENT_REQUEST)}`}>
+              <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`Attached: ${seriesLabel} ${record.subject} ${record.year} — ${typeLabel}`)}&body=${encodeURIComponent(ATTACHMENT_REQUEST)}`}>
                 {CONTACT_EMAIL}
               </a>
               .
