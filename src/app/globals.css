@@ -676,7 +676,7 @@ button.button--gradient,
 @container (min-width: 36rem) {
   .list-rows--tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
     gap: 0.5rem;
     border: none;
     border-radius: 0;
@@ -812,6 +812,7 @@ th {
   font-size: 0.8125rem;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .data-table {
@@ -1158,6 +1159,12 @@ th {
   display: flex;
   gap: 1rem;
   margin-top: 1.5rem;
+}
+
+/* The empty stand-in for a missing Previous or Next takes no room, so a
+   lone link reaches the page's right edge instead of stopping a gap short. */
+.paper-pager > span:empty {
+  display: none;
 }
 
 .paper-pager__link {
